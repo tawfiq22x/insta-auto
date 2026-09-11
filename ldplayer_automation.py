@@ -924,36 +924,33 @@ class LDPlayerAutomation:
 
             # 1. Check if Instagram is already open on welcome screen or launch it
             ui_check = self.dump_ui().lower()
-            if "get started" not in ui_check and "create new account" not in ui_check:
+            if "get started" not in ui_check and "create new account" not in ui_check and "create account" not in ui_check:
                 log("🚀 Opening Instagram app...", "info")
                 self.launch_instagram()
                 time.sleep(3.5)
+                ui_check = self.dump_ui().lower()
             else:
-                log("Instagram is already open on the welcome screen!", "info")
+                log("Instagram is already open!", "info")
 
-            # 2. Tap 'Get started' or 'Create new account'
-            log("👉 Tapping 'Get started' button...", "info")
-            # In modern Instagram, 'Get started' is the main button at ~70% down the screen
-            tapped_start = self.tap_text(
-                ["Get started", "Create new account", "Sign up"],
-                timeout=2.0,
-                fallback_ratio=(0.50, 0.70),
-                xml_str=ui_check
-            )
-            time.sleep(0.6)
+            # Dismiss Google Smart Lock / Autofill popup if present
+            if "none of the above" in ui_check or ("smart lock" in ui_check and "google" in ui_check):
+                log("Dismissing Google Smart Lock popup...", "info")
+                self.tap_text(["None of the above", "Cancel", "Not now"], timeout=1.0)
+                time.sleep(0.5)
+                ui_check = self.dump_ui().lower()
+
+            # 2. Tap 'Get started' or 'Create new account' if present on welcome screen
+            if "create new account" in ui_check or "get started" in ui_check or "create account" in ui_check or "sign up with email or phone" in ui_check:
+                log("👉 [Step 1/11] Tapping 'Create new account' / 'Get started'...", "info")
+                self.tap_text(
+                    ["Create new account", "Create account", "Get started", "Sign up with email or phone number", "Sign up"],
+                    timeout=2.0,
+                    fallback_ratio=(0.50, 0.85),
+                    xml_str=ui_check
+                )
+                time.sleep(1.0)
 
             # 3. Step-by-Step Registration Loop (11-Step Instagram Registration Flow)
-            # 1. Create new account
-            # 2. Enter Email (switch to email if needed) -> Next
-            # 3. Enter Confirmation Code (6-digit OTP) -> Next
-            # 4. Create Password -> Next -> Save login info (Save / Not now)
-            # 5. Add Date of Birth (Wheel scroll adult age) -> Next
-            # 6. Create Username -> Next
-            # 7. Agree to Terms and Policies ("I agree")
-            # 8. Add Profile Picture -> Skip
-            # 9. Find Friends from Contacts -> Skip
-            # 10. Connect to Facebook -> Skip
-            # 11. Discover Suggested Accounts -> Top Right Arrow/Next -> Home Feed
             email_entered = False
             code_entered = False
             password_entered = False
@@ -965,34 +962,83 @@ class LDPlayerAutomation:
 
             registration_completed = False
 
-            for step_round in range(1, 45):
+            for step_round in range(1, 50):
                 ui = self.dump_ui().lower()
 
-                # Step 2: Contact Method - Phone / Email screen ("What's your mobile number?" or "Sign up with email")
-                if not email_entered and ("mobile" in ui or "phone" in ui or "what's your mobile" in ui):
-                    log("📧 [Step 2/11] Selecting 'Sign up with email' instead of phone...", "info")
-                    self.tap_text(["Sign up with email", "Sign up with email address", "Email", "Use email"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
-                    time.sleep(0.35)
-                    ui = self.dump_ui().lower()
+                # Dismiss Google Smart Lock / Autofill popup
+                if "none of the above" in ui or ("choose an account" in ui and "google" in ui):
+                    log("Dismissing Google Autofill / Smart Lock...", "info")
+                    self.tap_text(["None of the above", "Cancel", "Not now"], timeout=1.0)
+                    time.sleep(0.5)
+                    continue
 
-                if not email_entered and not code_entered and ("what's your email" in ui or "email" in ui):
-                    log(f"✉️ [Step 2/11] Entering Email: {account_data['email']}...", "info")
-                    self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email"], fallback_ratio=(0.50, 0.35), xml_str=ui)
-                    log("👉 [Step 2/11] Tapping 'Next' to dispatch confirmation code...", "info")
-                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
-                    email_entered = True
+                # Step 1 Recovery: If screen is still on Welcome Screen
+                if not (email_entered or code_entered or password_entered or birthday_set or terms_agreed) and (
+                    "create new account" in ui or "get started" in ui or "already have an account" in ui
+                ):
+                    log("👉 [Step 1/11] Welcome screen detected! Tapping 'Create new account'...", "info")
+                    self.tap_text(
+                        ["Create new account", "Create account", "Get started", "Sign up with email or phone number", "Sign up"],
+                        timeout=1.5,
+                        fallback_ratio=(0.50, 0.85),
+                        xml_str=ui
+                    )
+                    time.sleep(1.0)
+                    continue
+
+                # Step 2a: Contact Method - Phone screen detected -> Switch to Email
+                on_phone_screen = (
+                    ("what's your mobile" in ui or "enter your mobile" in ui or "mobile number" in ui or 
+                     "phone number" in ui or "sign up with email" in ui or "sign up with email address" in ui or 
+                     "use email" in ui or ("mobile" in ui and "email" not in ui))
+                    and not ("what's your email" in ui or "enter your email" in ui or "email address" in ui)
+                    and not code_entered
+                )
+                if on_phone_screen:
+                    log("📧 [Step 2/11] Mobile screen detected. Switching to Email ('Sign up with email' / Email tab)...", "info")
+                    self.tap_text(
+                        ["Sign up with email", "Sign up with email address", "Use email address instead", "Use email", "Email"],
+                        timeout=1.2,
+                        fallback_ratio=(0.50, 0.88),
+                        xml_str=ui
+                    )
                     time.sleep(0.8)
                     continue
 
+                # Step 2b: Contact Method - Email Entry screen detected
+                on_email_screen = (
+                    ("what's your email" in ui or "enter your email" in ui or "email address" in ui or 
+                     ("email" in ui and ("sign up with phone" in ui or "sign up with mobile" in ui or "use phone" in ui or "use mobile" in ui)) or
+                     ("email" in ui and "phone" not in ui and "mobile" not in ui and not code_entered))
+                    and not code_entered
+                    and not password_entered
+                )
+                if on_email_screen:
+                    log(f"✉️ [Step 2/11] Email screen detected! Entering Email: {account_data['email']}...", "info")
+                    self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email", "email address"], fallback_ratio=(0.50, 0.35))
+                    log("👉 [Step 2/11] Tapping 'Next' to dispatch confirmation code...", "info")
+                    self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.45))
+                    time.sleep(1.2)
+                    
+                    # Verify if screen advanced to confirmation code or password
+                    check_post_email = self.dump_ui().lower()
+                    if "code" in check_post_email or "confirmation" in check_post_email or "security code" in check_post_email:
+                        log("📬 [Step 2/11] Verification code dispatched successfully by Instagram!", "success")
+                        email_entered = True
+                    elif "password" in check_post_email:
+                        email_entered = True
+                    continue
+
                 # Step 3: Confirmation Code ("Enter confirmation code" / "Confirmation code" / "6-digit")
-                if not code_entered and ("confirmation code" in ui or "enter the 6-digit" in ui or "check your email" in ui or "security code" in ui or "enter confirmation" in ui):
+                if "confirmation code" in ui or "enter the 6-digit" in ui or "check your email" in ui or "security code" in ui or "enter confirmation" in ui:
+                    email_entered = True
                     log("📬 [Step 3/11] Instagram sent verification email! Waiting for OTP code from EasyEarn...", "task")
                     
                     received_code = otp_code
                     if not received_code and otp_fetcher:
                         # Poll EasyEarn for the code for up to 90 seconds
-                        for poll_attempt in range(18):
-                            log(f"⏳ [Step 3/11] Waiting for OTP code from EasyEarn (attempt {poll_attempt+1}/18)...", "info")
+                        for poll_attempt in range(20):
+                            log(f"⏳ [Step 3/11] Waiting for OTP code from EasyEarn (attempt {poll_attempt+1}/20)...", "info")
                             received_code = otp_fetcher()
                             if received_code:
                                 break
@@ -1000,17 +1046,17 @@ class LDPlayerAutomation:
 
                     if received_code:
                         log(f"🔑 [Step 3/11] OTP Code received: {received_code}! Entering into Instagram...", "success")
-                        self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35), xml_str=ui)
-                        self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
+                        self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35))
+                        self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45))
                         code_entered = True
-                        time.sleep(1.0)
+                        time.sleep(1.2)
                         continue
                     else:
                         log("⚠️ [Step 3/11] Did not receive OTP code in time. Will retry on next cycle.", "warning")
                         break
 
                 # Step 4: Password Step ("Create a password")
-                if not password_entered and ("create a password" in ui or "choose a password" in ui or "set a password" in ui or "password" in ui):
+                if "create a password" in ui or "choose a password" in ui or "set a password" in ui or ("password" in ui and "login" not in ui and not password_entered):
                     pwd = account_data.get('password', '').strip()
                     if not pwd or len(pwd) < 6:
                         import random, string
@@ -1020,17 +1066,17 @@ class LDPlayerAutomation:
 
                     log(f"🔒 [Step 4/11] Entering Password ({len(account_data['password'])} chars)...", "info")
                     self.set_clipboard(account_data['password'])
-                    self.enter_text_to_field(account_data['password'], hint_keywords=["password", "create a password"], fallback_ratio=(0.50, 0.35), is_password=True, xml_str=ui)
-                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
+                    self.enter_text_to_field(account_data['password'], hint_keywords=["password", "create a password"], fallback_ratio=(0.50, 0.35), is_password=True)
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45))
                     password_entered = True
-                    time.sleep(0.4)
+                    time.sleep(0.5)
                     continue
 
                 # Step 4b: Save login info prompt ("Save your login info?")
-                if "save your login info" in ui or ("save" in ui and "not now" in ui and not email_entered):
+                if "save your login info" in ui or ("save" in ui and "not now" in ui and not on_phone_screen and not on_email_screen):
                     log("💾 [Step 4/11] Tapping 'Save' on login info...", "info")
-                    self.tap_text(["Save", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
-                    time.sleep(0.35)
+                    self.tap_text(["Save", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.45))
+                    time.sleep(0.4)
                     continue
 
                 # Step 5: Birthday Step ("What's your birthday?" / "Date of birth")
@@ -1042,29 +1088,29 @@ class LDPlayerAutomation:
                     continue
 
                 # Step 6: Username Step ("Create a username")
-                if not username_entered and ("create a username" in ui or "choose a username" in ui or ("username" in ui and not email_entered and not code_entered)):
+                if "create a username" in ui or "choose a username" in ui or ("username" in ui and not on_email_screen and not code_entered):
                     log(f"👤 [Step 6/11] Setting Username: {account_data['username']}...", "info")
-                    self.enter_text_to_field(account_data['username'], hint_keywords=["username"], fallback_ratio=(0.50, 0.35), xml_str=ui)
-                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
+                    self.enter_text_to_field(account_data['username'], hint_keywords=["username"], fallback_ratio=(0.50, 0.35))
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45))
                     username_entered = True
                     time.sleep(0.5)
                     continue
 
-                # Optional Name step if presented ("What's your name?" / "Full name")
+                # Optional Name step if presented in this variant ("What's your name?" / "Full name")
                 if not name_entered and ("what's your name" in ui or "full name" in ui):
                     log(f"📝 Entering Name: {account_data['full_name']}...", "info")
-                    self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35), xml_str=ui)
-                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
+                    self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35))
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45))
                     name_entered = True
-                    time.sleep(0.35)
+                    time.sleep(0.4)
                     continue
 
                 # Step 7: Agree to Terms and Policies ("I agree" / "Sign up")
                 if not terms_agreed and ("i agree" in ui or "agree to instagram" in ui or "terms" in ui):
                     log("📜 [Step 7/11] Tapping 'I agree' to Terms & Policies...", "info")
-                    self.tap_text(["I agree", "Agree", "Sign up"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    self.tap_text(["I agree", "Agree", "Sign up"], timeout=1.0, fallback_ratio=(0.50, 0.90))
                     terms_agreed = True
-                    time.sleep(2.5)
+                    time.sleep(3.0)
                     continue
 
                 # Step 8: Add Profile Picture (Skippable)
@@ -1121,7 +1167,11 @@ class LDPlayerAutomation:
 
             if not registration_completed:
                 stalled_screen = "Unknown screen"
-                if "birthday" in ui or "date of birth" in ui:
+                if "create new account" in ui or "get started" in ui:
+                    stalled_screen = "Welcome screen"
+                elif "mobile" in ui or "phone" in ui:
+                    stalled_screen = "Mobile number screen"
+                elif "birthday" in ui or "date of birth" in ui:
                     stalled_screen = "Birthday screen"
                 elif "password" in ui or "create a password" in ui:
                     stalled_screen = "Password screen"

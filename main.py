@@ -90,15 +90,15 @@ class InstagramAutomationController:
     def get_version_info(self) -> dict:
         """Load version and release details from version.json"""
         default_info = {
-            "version": "1.5.1",
-            "release_date": "2026-09-11 19:55",
-            "build_id": "v1.5.1-rel",
+            "version": "1.5.2",
+            "release_date": "2026-09-11 20:15",
+            "build_id": "v1.5.2-rel",
             "features": [
-                "Full 11-Step Instagram Registration Flow: Perfectly aligned with exact Instagram onboarding sequence (Launch -> Email -> OTP Code -> Password -> Adult Birthday -> Username -> Terms -> Profile Pic Skip -> Contacts Skip -> Facebook Skip -> Suggested Accounts Bypass -> Home Feed)",
-                "Bidirectional Wheel Scroll Engine: Rolls Year back 20-30 years with dual-direction fallback and UI advance verification to ensure 13+ age compliance",
-                "Post-Terms Onboarding Handler: Reliably bypasses profile photo, contacts, Facebook, and taps the top-right arrow on Discover Suggested Accounts to land cleanly on the Home Feed",
-                "Zero False-Completion Guard: Account creation strictly requires Terms agreement and Home Feed landing before marking complete",
-                "Real-time Step-by-Step Logging: Emits clear [Step X/11] terminal status indicators throughout the entire registration flow"
+                "Resilient Email & Phone Tab Transition: Accurately detects Phone screen vs Email screen, taps 'Sign up with email' / Email tab, and waits for screen transition before entering email",
+                "Welcome Screen & Google Smart Lock Recovery: Added automatic welcome screen detection inside the registration loop and Google Smart Lock dialog dismissal",
+                "Transition-Verified Email Submission: Verifies the screen moves to OTP Confirmation or Password before locking email_entered state",
+                "Full 11-Step Instagram Registration Flow: Launch -> Switch to Email -> OTP Code -> Password -> Adult Birthday -> Username -> Terms -> Onboarding Skips -> Home Feed",
+                "Granular Stalled Screen Diagnostics: Accurately pinpoints whether the bot stopped on Welcome, Mobile, Email, OTP, Birthday, or Terms screen"
             ]
         }
         if os.path.exists("version.json"):
