@@ -57,7 +57,7 @@ class InstagramAutomationController:
         self.failed_accounts = 0
         
         # Initialize clients
-        self.easyearn = EasyEarnClient()
+        self.easyearn = EasyEarnClient(log_callback=self.log)
         self.ldplayer = LDPlayerAutomation()
         
         # UI Variables
@@ -138,6 +138,7 @@ class InstagramAutomationController:
         ttk.Button(control_frame, text="📊 Test Connection", command=self.test_connection, width=15).grid(row=0, column=4, padx=5)
         ttk.Button(control_frame, text="🚀 Launch LDPlayer", command=self.manual_launch_ldplayer, width=16).grid(row=0, column=5, padx=5)
         ttk.Button(control_frame, text="📸 Open Instagram", command=self.manual_launch_instagram, width=16).grid(row=0, column=6, padx=5)
+        ttk.Button(control_frame, text="🌐 Open Browser", command=self.manual_open_browser, width=16).grid(row=0, column=7, padx=5)
         
         # === Current Task ===
         task_frame = ttk.LabelFrame(main_frame, text="📋 Current Task", padding="10")
@@ -316,6 +317,18 @@ class InstagramAutomationController:
             self.log("✅ Instagram launch commands sent to LDPlayer!", 'success')
         else:
             self.log("❌ Could not open Instagram. Check LDPlayer screen.", 'error')
+            
+    def manual_open_browser(self):
+        """Manually trigger browser launch to test EasyEarn connection or login"""
+        self.log("🌐 Attempting to launch browser for EasyEarn...", 'info')
+        def _launch():
+            try:
+                self.easyearn.start_browser()
+                self.easyearn.driver.get(f"{self.easyearn.base_url}/dashboard")
+                self.log("✅ Browser launched and navigated to EasyEarn dashboard!", 'success')
+            except Exception as e:
+                self.log(f"❌ Failed to launch browser: {e}", 'error')
+        threading.Thread(target=_launch, daemon=True).start()
     
     # ============================================
     # Core Automation
@@ -387,19 +400,13 @@ class InstagramAutomationController:
                     'full_name': task.get('first_name', task.get('login', ''))
                 }
                 
-                # Step 4: We can now launch Instagram, type email, and request code
-                # Note: If email code is needed from EasyEarn after typing email:
-                self.log("📧 Fetching email verification code from EasyEarn...", 'info')
-                code = self.easyearn.get_email_code()
-                if not code:
-                    self.log("⚠️ No OTP code received yet, attempting account setup...", 'warning')
-                else:
-                    self.log(f"📧 Code received: {code}", 'success')
-                
+                # Step 4: Launch registration workflow on LDPlayer
+                # OTP code will be fetched in real-time when Instagram reaches the verification screen
                 result = self.ldplayer.create_instagram_account(
                     account_data=account_data,
-                    otp_code=code or "",
-                    twofa_enabled=True
+                    otp_fetcher=self.easyearn.get_email_code,
+                    twofa_enabled=True,
+                    log_cb=self.log
                 )
                 
                 if result['success']:

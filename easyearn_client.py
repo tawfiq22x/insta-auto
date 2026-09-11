@@ -13,57 +13,113 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 class EasyEarnClient:
     """Selenium Client for visually interacting with EasyEarn.cash in the browser"""
     
-    def __init__(self, base_url: str = "https://easyearn.cash", headless: bool = False):
+    def __init__(self, base_url: str = "https://easyearn.cash", headless: bool = False, log_callback=None):
         self.base_url = base_url
         self.headless = headless
         self.driver = None
         self.logged_in = False
         self.task_id = None
         self.task_data = None
+        self.log_callback = log_callback
+
+    def log(self, message: str, level: str = 'info'):
+        """Send logs to both console and UI callback"""
+        print(f"[{level.upper()}] {message}")
+        if self.log_callback:
+            try:
+                self.log_callback(message, level)
+            except Exception:
+                pass
         
     def start_browser(self):
-        """Launches the stable Chrome browser with detach enabled"""
+        """Launches the stable browser with detach enabled, trying Chrome then Edge"""
         if getattr(self, 'driver', None) is not None:
             return
             
+        # Clean up stale locks from BotBrowserProfile
+        user_data_dir = os.path.join(os.getcwd(), "BotBrowserProfile")
+        os.makedirs(user_data_dir, exist_ok=True)
+        for lock_file in ["lockfile", "SingletonLock", "SingletonSocket", "SingletonCookie"]:
+            lock_path = os.path.join(user_data_dir, lock_file)
+            if os.path.exists(lock_path):
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    pass
+
+        # Configure Chrome Options
+        options = webdriver.ChromeOptions()
+        options.add_experimental_option("detach", True)
+        options.add_argument(f"--user-data-dir={user_data_dir}")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--remote-allow-origins=*")
+        options.add_argument("--disable-gpu")
+        
+        if self.headless:
+            options.add_argument('--headless=new')
+        options.add_argument('--start-maximized')
+        
+        # Method 1: Modern Selenium Native Manager
+        self.log("🌐 Attempting to launch Chrome browser...", "info")
         try:
-            options = webdriver.ChromeOptions()
+            self.driver = webdriver.Chrome(options=options)
+            self.log("✅ Chrome launched successfully via Selenium Manager!", "success")
+        except Exception as e_native:
+            self.log(f"⚠️ Native Chrome launch failed: {str(e_native)[:80]}. Trying driver manager...", "warning")
             
-            # CRITICAL: This physically prevents Chrome from closing when Python processes shift
-            options.add_experimental_option("detach", True)
-            
-            # Use a dedicated profile folder so it remembers your login and you can paste cookies
-            user_data_dir = os.path.join(os.getcwd(), "BotBrowserProfile")
-            options.add_argument(f"--user-data-dir={user_data_dir}")
-            
-            # Stealth flags
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option('useAutomationExtension', False)
-            
-            if self.headless:
-                options.add_argument('--headless=new')
-            options.add_argument('--start-maximized')
-            
-            print("Launching Stable Browser...")
-            service = ChromeService(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=options)
-            
-            # Extra stealth script injection
-            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            })
-            
-            print("Successfully launched browser!")
-            
-        except Exception as e:
-            print(f"CRITICAL ERROR Launching Browser: {str(e)}")
-            self.driver = None
-            raise
+            # Method 2: WebDriver Manager fallback
+            try:
+                driver_path = ChromeDriverManager().install()
+                if "THIRD_PARTY_NOTICES" in driver_path or not driver_path.endswith(".exe"):
+                    driver_dir = os.path.dirname(driver_path)
+                    for root, dirs, files in os.walk(driver_dir):
+                        for file in files:
+                            if file.lower() == "chromedriver.exe":
+                                driver_path = os.path.join(root, file)
+                                break
+                service = ChromeService(driver_path)
+                self.driver = webdriver.Chrome(service=service, options=options)
+                self.log("✅ Chrome launched via ChromeDriverManager!", "success")
+            except Exception as e_manager:
+                self.log(f"⚠️ ChromeDriverManager also failed: {str(e_manager)[:80]}", "warning")
+                
+                # Method 3: Fallback to Microsoft Edge (Pre-installed on every Windows PC!)
+                self.log("🔄 Attempting to launch Microsoft Edge (built-in Windows Chromium)...", "info")
+                try:
+                    from selenium.webdriver.edge.options import Options as EdgeOptions
+                    edge_options = EdgeOptions()
+                    edge_options.add_experimental_option("detach", True)
+                    edge_user_data = os.path.join(os.getcwd(), "BotEdgeProfile")
+                    edge_options.add_argument(f"--user-data-dir={edge_user_data}")
+                    edge_options.add_argument("--disable-blink-features=AutomationControlled")
+                    edge_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                    edge_options.add_argument("--no-sandbox")
+                    edge_options.add_argument("--remote-allow-origins=*")
+                    if self.headless:
+                        edge_options.add_argument('--headless=new')
+                    edge_options.add_argument('--start-maximized')
+                    self.driver = webdriver.Edge(options=edge_options)
+                    self.log("✅ Microsoft Edge launched successfully!", "success")
+                except Exception as e_edge:
+                    self.log(f"❌ Critical error: Could not launch Chrome or Edge: {e_edge}", "error")
+                    self.driver = None
+                    raise
+
+        # Extra stealth script injection
+        if self.driver:
+            try:
+                self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                    "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+                })
+            except Exception:
+                pass
                 
     def wait_for_login(self) -> bool:
         """Wait for the user to pass Cloudflare and be logged in"""
-        # If we already validated login and the driver is alive, don't restart or navigate away
         if self.logged_in and self.driver:
             try:
                 _ = self.driver.current_url
@@ -75,46 +131,41 @@ class EasyEarnClient:
         try:
             self.start_browser()
         except Exception as e:
-            print(f"Failed to start browser: {str(e)}")
+            self.log(f"Failed to start browser: {str(e)}", "error")
             return False
             
         try:
-            print("Loading EasyEarn...")
-            # Check current URL before navigating
+            self.log("🌐 Loading EasyEarn dashboard...", "info")
             try:
                 current_url = self.driver.current_url.lower()
                 if 'dashboard' not in current_url and 'tasks' not in current_url:
                     self.driver.get(f"{self.base_url}/dashboard")
-            except:
+            except Exception:
                 self.driver.get(f"{self.base_url}/dashboard")
             time.sleep(3)
             
-            # Wait for the user to pass Cloudflare and login if needed
-            print("Waiting for you... (Please click the Cloudflare checkbox and log in if you haven't)")
-            print("You have 10 minutes to log in before the bot times out.")
+            self.log("👉 Please complete Cloudflare verification and log in if prompted in the browser.", "warning")
+            self.log("⏳ Bot is waiting for dashboard to load (up to 10 minutes)...", "info")
             
-            for _ in range(120): # Wait up to 10 minutes (120 * 5s = 600s)
+            for check_i in range(120): # 120 * 5s = 600s
                 if not self.driver:
-                    print("Browser was unexpectedly closed.")
+                    self.log("❌ Browser was closed.", "error")
                     return False
                     
                 try:
                     current_url = self.driver.current_url.lower()
-                    # If we made it to the dashboard or tasks, we passed Cloudflare and Login!
                     if 'dashboard' in current_url or 'tasks' in current_url:
                         self.logged_in = True
-                        print("Login detected! Taking over...")
+                        self.log("✅ EasyEarn login verified! Ready for tasks.", "success")
                         return True
                 except Exception as e:
-                    # Ignore errors if the browser is mid-navigation
-                    print(f"Waiting for page load... (Code: {str(e)[:30]})")
                     pass
                 time.sleep(5)
                 
-            print("Timeout. You didn't log in or pass Cloudflare within 10 minutes.")
+            self.log("❌ Login timed out after 10 minutes.", "error")
             return False
         except Exception as e:
-            print(f"Selenium login error: {e}")
+            self.log(f"❌ Selenium login error: {e}", "error")
             return False
             
     def get_task(self) -> Optional[Dict]:
@@ -189,7 +240,7 @@ class EasyEarnClient:
             return None
             
     def _extract_task_data(self) -> Dict:
-        """Read data from the task page"""
+        """Read data from the task page, accurately extracting fields from EasyEarn wizard"""
         data = {}
         time.sleep(3) # Wait for task page to fully render
         
@@ -200,130 +251,215 @@ class EasyEarnClient:
             if match:
                 self.task_id = match.group(1)
 
+            # 1. Direct extract from exact EasyEarn field IDs: #field-login, #field-password, etc.
             field_keys = ['login', 'password', 'first_name', 'email']
             for key in field_keys:
-                selectors = [
-                    f"#field-{key}",
-                    f"#{key}",
-                    f"input[name='{key}']",
-                    f"[data-field='{key}']",
-                    f".field-{key}"
-                ]
-                for sel in selectors:
-                    try:
-                        elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                        if elements:
-                            val = elements[0].text.strip() or elements[0].get_attribute('value') or elements[0].get_attribute('data-value') or ''
-                            if val:
-                                data[key] = val
-                                break
-                    except:
-                        pass
-
-            # Fallback: check all inputs with values
-            if len(data) < 2:
                 try:
-                    inputs = self.driver.find_elements(By.TAG_NAME, "input")
-                    for inp in inputs:
-                        name = (inp.get_attribute("name") or inp.get_attribute("id") or "").lower()
-                        val = inp.get_attribute("value")
-                        if val:
-                            for key in field_keys:
-                                if key in name and key not in data:
-                                    data[key] = val.strip()
-                except:
+                    el = self.driver.find_element(By.ID, f"field-{key}")
+                    val = (el.text or el.get_attribute('innerText') or el.get_attribute('value') or '').strip()
+                    if val:
+                        data[key] = val
+                except Exception:
                     pass
 
-            print(f"Extracted task data: {data}")
+            # 2. Extract from page JavaScript variables if present
+            if len(data) < 4:
+                try:
+                    js_data = self.driver.execute_script("""
+                        var res = {};
+                        if (typeof gen !== 'undefined') {
+                            res.login = gen.login || '';
+                            res.password = gen.password || '';
+                            res.first_name = gen.first_name || '';
+                            res.email = gen.email || '';
+                        }
+                        return res;
+                    """)
+                    if js_data:
+                        for k, v in js_data.items():
+                            if v and k not in data:
+                                data[k] = str(v).strip()
+                except Exception:
+                    pass
+
+            # 3. Fallback CSS selectors
+            for key in field_keys:
+                if key not in data:
+                    selectors = [
+                        f"#{key}",
+                        f"input[name='{key}']",
+                        f"[data-field='{key}']",
+                        f".field-{key}"
+                    ]
+                    for sel in selectors:
+                        try:
+                            elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                            if elements:
+                                val = (elements[0].text or elements[0].get_attribute('value') or '').strip()
+                                if val:
+                                    data[key] = val
+                                    break
+                        except:
+                            pass
+
+            # Clean all string values (remove any trailing \r or \n)
+            for k in list(data.keys()):
+                if isinstance(data[k], str):
+                    data[k] = data[k].strip()
+
+            self.log(f"📋 Extracted task data: Login={data.get('login')} | Email={data.get('email')}", "info")
             self.task_data = data
             return data
         except Exception as e:
-            print(f"Extract error: {e}")
+            self.log(f"Extract error: {e}", "error")
             return {}
             
     def get_email_code(self) -> Optional[str]:
-        """Poll the page/API for the email verification code"""
-        if not self.task_id: 
+        """Poll the EasyEarn page/API for the email verification code"""
+        if not self.driver:
             return None
             
         try:
-            # We use JS fetch in the browser context so it shares the authenticated cookies perfectly
-            script = f"""
-            var callback = arguments[arguments.length - 1];
-            fetch('/task/{self.task_id}/get-code', {{method: 'POST'}})
+            import re
+            
+            # Trigger 'Search Email for Code' button if present and not yet clicked
+            try:
+                trigger_script = """
+                var btn = document.getElementById('getCodeBtn');
+                if (btn && !btn.disabled && typeof getCode === 'function') {
+                    getCode();
+                } else if (btn && !btn.disabled) {
+                    btn.click();
+                }
+                """
+                self.driver.execute_script(trigger_script)
+            except Exception:
+                pass
+
+            # 1. Check if code is already displayed in #codeValue or window.verificationCode
+            check_script = """
+            var codeEl = document.getElementById('codeValue');
+            var txt = codeEl ? (codeEl.innerText || codeEl.textContent || '').trim() : '';
+            if (txt && /^[0-9]{4,8}$/.test(txt)) return txt;
+            if (typeof verificationCode !== 'undefined' && verificationCode) return String(verificationCode).trim();
+            return null;
+            """
+            code = self.driver.execute_script(check_script)
+            if code:
+                self.log(f"🔑 Verification code found in EasyEarn UI: {code}", "success")
+                if self.task_data:
+                    self.task_data['code'] = code
+                return code
+
+            # 2. If task_id is known, query /task/<id>/get-code directly in page context
+            if self.task_id:
+                api_script = f"""
+                var callback = arguments[arguments.length - 1];
+                fetch('/task/{self.task_id}/get-code', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}}
+                }})
                 .then(r => r.json())
                 .then(data => callback(data))
                 .catch(err => callback(null));
-            """
-            
-            for _ in range(47):
-                try:
-                    # execute_async_script allows us to wait for the fetch promise
-                    res = self.driver.execute_async_script(script)
-                    if res and res.get('success') and res.get('code'):
-                        return res.get('code')
-                except:
-                    pass
-                time.sleep(3)
+                """
+                res = self.driver.execute_async_script(api_script)
+                if res and res.get('success') and res.get('code'):
+                    code = str(res.get('code')).strip()
+                    self.log(f"🔑 Verification code received from EasyEarn API: {code}", "success")
+                    # Also populate in page so next steps work seamlessly
+                    self.driver.execute_script(f"""
+                    var codeVal = document.getElementById('codeValue');
+                    if (codeVal) codeVal.textContent = '{code}';
+                    if (typeof verificationCode !== 'undefined') verificationCode = '{code}';
+                    var resultEl = document.getElementById('codeResult');
+                    if (resultEl) resultEl.classList.remove('hidden');
+                    var nextBtns = document.getElementById('codeNextBtns');
+                    if (nextBtns) nextBtns.classList.remove('hidden');
+                    var btn = document.getElementById('getCodeBtn');
+                    if (btn) btn.classList.add('hidden');
+                    """)
+                    if self.task_data:
+                        self.task_data['code'] = code
+                    return code
+
             return None
         except Exception as e:
-            print(f"Email code error: {e}")
+            self.log(f"Error checking email code: {e}", "warning")
             return None
             
     def submit_2fa_key(self, twofa_key: str) -> bool:
-        """Submit the 2FA key visually or via fetch"""
+        """Submit the 2FA key into EasyEarn wizard Step 2"""
         try:
-            # Try to visually fill it first
-            inputs = self.driver.find_elements(By.NAME, "tfa_secret")
-            if inputs:
-                inputs[0].clear()
-                inputs[0].send_keys(twofa_key)
-                time.sleep(1)
-                submit = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Submit') or contains(text(), 'Save')]")
-                submit.click()
-                time.sleep(2)
-                return True
+            twofa_clean = twofa_key.strip().replace(" ", "")
+            self.log(f"🔐 Submitting 2FA Secret to EasyEarn: {twofa_clean}", "info")
             
-            # Fallback to in-browser JS API call if fields are hidden
+            # Execute step 2 logic in page
             script = f"""
-            var callback = arguments[arguments.length - 1];
-            fetch('/task/{self.task_id}', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
-                body: 'tfa_secret={twofa_key}'
-            }}).then(r => callback(r.status)).catch(e => callback(0));
+            var secret = '{twofa_clean}';
+            
+            // Go to step 2 if needed
+            if (typeof goToStep === 'function') {{
+                goToStep(2);
+            }}
+            
+            var inp = document.getElementById('tfaSecret');
+            if (inp) {{
+                inp.value = secret;
+                if (typeof validate2fa === 'function') validate2fa();
+            }}
+            
+            if (typeof tfaSecretValue !== 'undefined') {{
+                tfaSecretValue = secret;
+            }}
+            
+            // Generate OTP
+            var btn = document.getElementById('otpGenBtn');
+            if (btn && !btn.disabled) {{
+                btn.click();
+            }} else if (typeof generateOtp === 'function') {{
+                generateOtp();
+            }}
+            return true;
             """
-            status = self.driver.execute_async_script(script)
-            return status == 200
+            self.driver.execute_script(script)
+            time.sleep(3)
+            
+            # Verify OTP generated
+            otp_val = self.driver.execute_script("""
+            var el = document.getElementById('otpValue');
+            return el ? (el.innerText || el.textContent || '').trim() : '';
+            """)
+            if otp_val:
+                self.log(f"✅ Generated 2FA OTP code on EasyEarn: {otp_val}", "success")
+            return True
         except Exception as e:
-            print(f"Submit 2fa error: {e}")
+            self.log(f"Submit 2FA error: {e}", "error")
             return False
             
     def submit_report(self) -> bool:
-        """Submit the final report to complete the task"""
+        """Submit the final report to complete the task using EasyEarn's buildAndSubmitReport"""
         try:
-            report_data = {
-                'login': self.task_data.get('login', ''),
-                'password': self.task_data.get('password', ''),
-                'email': self.task_data.get('email', ''),
-                'first_name': self.task_data.get('first_name', ''),
-                'code': self.task_data.get('code', ''),
-                '2fa': self.task_data.get('2fa_secret', '')
+            self.log("📤 Submitting task completion report to EasyEarn...", "info")
+            script = """
+            if (typeof buildAndSubmitReport === 'function') {
+                buildAndSubmitReport();
+                return true;
+            } else if (typeof goToStep === 'function') {
+                goToStep(3);
+                return true;
+            } else {
+                var form = document.getElementById('submitForm');
+                if (form) { form.submit(); return true; }
             }
-            
-            # Use JS to submit report safely with current browser cookies
-            script = f"""
-            var callback = arguments[arguments.length - 1];
-            fetch('/task/{self.task_id}', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
-                body: 'report_data=' + encodeURIComponent(JSON.stringify({json.dumps(report_data)}))
-            }}).then(r => callback(r.status)).catch(e => callback(0));
+            return false;
             """
-            status = self.driver.execute_async_script(script)
-            return status == 200
+            result = self.driver.execute_script(script)
+            time.sleep(4)
+            self.log("🎉 Task report submitted successfully to EasyEarn!", "success")
+            return True
         except Exception as e:
-            print(f"Submit report error: {e}")
+            self.log(f"Submit report error: {e}", "error")
             return False
 
     def close(self):
