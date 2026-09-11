@@ -9,3 +9,4 @@ coverage/
 token.txt
 .github_token
 .github_repo
+config.json

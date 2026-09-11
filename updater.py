@@ -12,6 +12,7 @@ FILES_TO_UPDATE = [
     'main.py',
     'ldplayer_automation.py',
     'easyearn_client.py',
+    'version.json',
     'requirements.txt',
     'run.bat',
     'UPDATE.bat',

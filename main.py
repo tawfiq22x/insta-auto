@@ -56,33 +56,90 @@ class InstagramAutomationController:
         self.accounts_created = 0
         self.failed_accounts = 0
         
+        # Load version info
+        self.version_info = self.get_version_info()
+        curr_ver = self.version_info.get("version", "1.4.2")
+        self.root.title(f"🤖 Instagram Automation Suite - v{curr_ver}")
+        self.root.geometry("1120x800")
+        self.root.minsize(1000, 720)
+        self.root.resizable(True, True)
+        
         # Initialize clients
         self.easyearn = EasyEarnClient(log_callback=self.log)
         self.ldplayer = LDPlayerAutomation()
         
         # UI Variables
-        self.ldplayer_path = tk.StringVar(value="C:\\LDPlayer\\LDPlayer.exe")
+        self.ldplayer_path = tk.StringVar(value="C:\\LDPlayer\\LDPlayer9\\dnplayer.exe")
         self.instance_name = tk.StringVar(value="LDPlayer")
         self.instance_index = tk.StringVar(value="0")
         self.auto_mode = tk.BooleanVar(value=True)
         self.headless_mode = tk.BooleanVar(value=False)
+        self._config_loaded = False
         
         self.setup_ui()
         self.load_config()
+        self._config_loaded = True
         
+        # Attach automatic saving to all configuration variables
+        self._bind_auto_save(self.ldplayer_path)
+        self._bind_auto_save(self.instance_name)
+        self._bind_auto_save(self.instance_index)
+        self._bind_auto_save(self.auto_mode)
+        self._bind_auto_save(self.headless_mode)
+        
+    def get_version_info(self) -> dict:
+        """Load version and release details from version.json"""
+        default_info = {
+            "version": "1.4.2",
+            "release_date": "2026-09-11 16:50",
+            "build_id": "v1.4.2-rel",
+            "features": [
+                "Added Version & Updates tab with live update status and file integrity check",
+                "Persistent LDPlayer path: instant auto-save to config.json upon browsing",
+                "Private GitHub repository support with token.txt authentication",
+                "Automated 1-Click ZIP extraction & sync from Downloads",
+                "Enhanced LDPlayer APK verification and stealth browser launcher"
+            ]
+        }
+        if os.path.exists("version.json"):
+            try:
+                with open("version.json", "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return {**default_info, **data}
+            except Exception:
+                pass
+        return default_info
+
     def setup_ui(self):
-        """Build the user interface"""
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        """Build the user interface with tabs"""
+        curr_ver = self.version_info.get("version", "1.4.2")
         
-        # === Title ===
-        title = ttk.Label(main_frame, text="🤖 Instagram Automation Suite", 
-                         font=('Arial', 18, 'bold'))
-        title.grid(row=0, column=0, columnspan=5, pady=10)
+        # Notebook for navigation tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        
+        # Tab 1: Dashboard Frame
+        dashboard_tab = ttk.Frame(self.notebook, padding="8")
+        self.notebook.add(dashboard_tab, text=" ⚡ Dashboard & Automation ")
+        
+        # Tab 2: Version & Updates Frame
+        version_tab = ttk.Frame(self.notebook, padding="12")
+        self.notebook.add(version_tab, text=f" ℹ️ Version & Updates (v{curr_ver}) ")
+        
+        # Setup Tab 2 contents
+        self.setup_version_tab(version_tab)
+        
+        # Trigger integrity refresh when switching tabs
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        
+        # === Title inside Dashboard ===
+        title = ttk.Label(dashboard_tab, text=f"🤖 Instagram Automation Suite   •   v{curr_ver}", 
+                         font=('Arial', 17, 'bold'))
+        title.grid(row=0, column=0, columnspan=5, pady=8)
         
         # === Stats Bar ===
-        stats_frame = ttk.LabelFrame(main_frame, text="📊 Statistics", padding="10")
-        stats_frame.grid(row=1, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=5)
+        stats_frame = ttk.LabelFrame(dashboard_tab, text="📊 Statistics", padding="10")
+        stats_frame.grid(row=1, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=4)
         
         self.stats_labels = {}
         stats = [
@@ -100,8 +157,8 @@ class InstagramAutomationController:
                 ttk.Separator(stats_frame, orient=tk.VERTICAL).grid(row=0, column=i*2+2, sticky=tk.NS, padx=10)
         
         # === Settings ===
-        settings_frame = ttk.LabelFrame(main_frame, text="⚙️ Settings", padding="10")
-        settings_frame.grid(row=2, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=5)
+        settings_frame = ttk.LabelFrame(dashboard_tab, text="⚙️ Settings", padding="10")
+        settings_frame.grid(row=2, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=4)
         
         # EasyEarn Account
         ttk.Label(settings_frame, text="Chrome Connection:").grid(row=0, column=0, sticky=tk.W, padx=5)
@@ -122,38 +179,38 @@ class InstagramAutomationController:
         ttk.Checkbutton(settings_frame, text="🖥️ Headless Mode", variable=self.headless_mode).grid(row=3, column=1, padx=5)
         
         # === Controls ===
-        control_frame = ttk.Frame(main_frame)
-        control_frame.grid(row=3, column=0, columnspan=5, pady=10)
+        control_frame = ttk.Frame(dashboard_tab)
+        control_frame.grid(row=3, column=0, columnspan=5, pady=8)
         
         self.start_btn = ttk.Button(control_frame, text="▶️ Start Automation", 
                                     command=self.start_automation, width=18)
-        self.start_btn.grid(row=0, column=0, padx=5)
+        self.start_btn.grid(row=0, column=0, padx=4)
         
         self.stop_btn = ttk.Button(control_frame, text="⏹️ Stop", 
                                    command=self.stop_automation, width=15, state=tk.DISABLED)
-        self.stop_btn.grid(row=0, column=1, padx=5)
+        self.stop_btn.grid(row=0, column=1, padx=4)
         
-        ttk.Button(control_frame, text="🧹 Clear Log", command=self.clear_log, width=15).grid(row=0, column=2, padx=5)
-        ttk.Button(control_frame, text="💾 Save Config", command=self.save_config, width=15).grid(row=0, column=3, padx=5)
-        ttk.Button(control_frame, text="📊 Test Connection", command=self.test_connection, width=15).grid(row=0, column=4, padx=5)
-        ttk.Button(control_frame, text="🚀 Launch LDPlayer", command=self.manual_launch_ldplayer, width=16).grid(row=0, column=5, padx=5)
-        ttk.Button(control_frame, text="📸 Open Instagram", command=self.manual_launch_instagram, width=16).grid(row=0, column=6, padx=5)
-        ttk.Button(control_frame, text="🌐 Open Browser", command=self.manual_open_browser, width=16).grid(row=0, column=7, padx=5)
+        ttk.Button(control_frame, text="🧹 Clear Log", command=self.clear_log, width=13).grid(row=0, column=2, padx=4)
+        ttk.Button(control_frame, text="💾 Save Config", command=self.save_config, width=13).grid(row=0, column=3, padx=4)
+        ttk.Button(control_frame, text="📊 Test Connection", command=self.test_connection, width=15).grid(row=0, column=4, padx=4)
+        ttk.Button(control_frame, text="🚀 Launch LDPlayer", command=self.manual_launch_ldplayer, width=16).grid(row=0, column=5, padx=4)
+        ttk.Button(control_frame, text="📸 Open Instagram", command=self.manual_launch_instagram, width=16).grid(row=0, column=6, padx=4)
+        ttk.Button(control_frame, text="🌐 Open Browser", command=self.manual_open_browser, width=15).grid(row=0, column=7, padx=4)
         
         # === Current Task ===
-        task_frame = ttk.LabelFrame(main_frame, text="📋 Current Task", padding="10")
-        task_frame.grid(row=4, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=5)
+        task_frame = ttk.LabelFrame(dashboard_tab, text="📋 Current Task", padding="8")
+        task_frame.grid(row=4, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=4)
         
         self.task_info = ttk.Label(task_frame, text="No active task", font=('Arial', 11))
         self.task_info.grid(row=0, column=0, sticky=tk.W)
         
         # === Log ===
-        log_frame = ttk.LabelFrame(main_frame, text="📝 Log", padding="5")
-        log_frame.grid(row=5, column=0, columnspan=5, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        log_frame = ttk.LabelFrame(dashboard_tab, text="📝 Log", padding="5")
+        log_frame.grid(row=5, column=0, columnspan=5, sticky=(tk.W, tk.E, tk.N, tk.S), pady=4)
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, width=120, height=20, 
+        self.log_text = scrolledtext.ScrolledText(log_frame, width=120, height=18, 
                                                   font=('Consolas', 9), bg='#1e1e1e', fg='#d4d4d4')
-        self.log_text.grid(row=0, column=0, padx=5, pady=5)
+        self.log_text.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Log colors
         self.log_text.tag_config('success', foreground='#4ec9b0')
@@ -163,17 +220,205 @@ class InstagramAutomationController:
         self.log_text.tag_config('task', foreground='#ce9178')
         
         # === Status Bar ===
-        self.status_var = tk.StringVar(value="Ready - Press Start to begin")
-        status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=6, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=5)
+        self.status_var = tk.StringVar(value=f"Ready  •  Version: v{curr_ver}  •  Press Start to begin")
+        status_bar = ttk.Label(dashboard_tab, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        status_bar.grid(row=6, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=4)
         
         # Grid weights
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(5, weight=1)
+        dashboard_tab.columnconfigure(0, weight=1)
+        dashboard_tab.rowconfigure(5, weight=1)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
+
+    def _on_tab_changed(self, event):
+        """Called when user changes tabs in the notebook"""
+        try:
+            selected_tab = self.notebook.tab(self.notebook.select(), "text")
+            if "Version" in selected_tab:
+                self.refresh_file_integrity()
+        except Exception:
+            pass
+
+    def setup_version_tab(self, parent):
+        """Construct the Version & Updates inspection tab"""
+        curr_ver = self.version_info.get("version", "1.4.2")
+        rel_date = self.version_info.get("release_date", "2026-09-11")
+        build_id = self.version_info.get("build_id", "v1.4.2-rel")
+        
+        # --- Top Info Card ---
+        header_frame = ttk.LabelFrame(parent, text="📌 Installed Version & Build Info", padding="12")
+        header_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        row1 = ttk.Frame(header_frame)
+        row1.pack(fill=tk.X, pady=2)
+        
+        ver_badge = ttk.Label(row1, text=f"Installed Version: v{curr_ver}", 
+                              font=('Arial', 14, 'bold'), foreground="#22863a")
+        ver_badge.pack(side=tk.LEFT, padx=5)
+        
+        state_badge = ttk.Label(row1, text="  ✅ Up to Date with Workspace", 
+                                font=('Arial', 11, 'bold'), foreground="#0366d6")
+        state_badge.pack(side=tk.LEFT, padx=10)
+        
+        row2 = ttk.Frame(header_frame)
+        row2.pack(fill=tk.X, pady=2)
+        ttk.Label(row2, text=f"📅 Release Timestamp: {rel_date}    |    🏷️ Build ID: {build_id}", 
+                  font=('Arial', 10)).pack(side=tk.LEFT, padx=5)
+                  
+        # Repo & Token Check
+        row3 = ttk.Frame(header_frame)
+        row3.pack(fill=tk.X, pady=(4, 0))
+        
+        token_status = "❌ Not found"
+        for tname in ["token.txt", ".github_token"]:
+            if os.path.exists(tname):
+                try:
+                    with open(tname, "r", encoding="utf-8") as tf:
+                        txt = tf.read().strip()
+                        if txt:
+                            token_status = f"✅ Active ({tname} - {len(txt)} chars)"
+                            break
+                except Exception:
+                    pass
+                    
+        repo_url = "Not configured"
+        for rname in [".github_repo", "github_repo.txt"]:
+            if os.path.exists(rname):
+                try:
+                    with open(rname, "r", encoding="utf-8") as rf:
+                        rval = rf.read().strip()
+                        if rval:
+                            repo_url = rval
+                            break
+                except Exception:
+                    pass
+                    
+        ttk.Label(row3, text=f"🔒 Private Repo Token: {token_status}    |    🌐 Repository: {repo_url}", 
+                  font=('Arial', 10), foreground="#555555").pack(side=tk.LEFT, padx=5)
+        
+        # --- Action Buttons ---
+        btn_bar = ttk.Frame(parent)
+        btn_bar.pack(fill=tk.X, pady=(0, 8))
+        
+        ttk.Button(btn_bar, text="🔄 Run UPDATE.bat (Sync Latest)", 
+                   command=self.run_update_utility, width=28).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_bar, text="🔍 Refresh File Integrity", 
+                   command=self.refresh_file_integrity, width=22).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_bar, text="📂 Open Bot Folder", 
+                   command=self.open_bot_directory, width=18).pack(side=tk.LEFT, padx=4)
+        
+        # --- File Verification Table (Treeview) ---
+        table_frame = ttk.LabelFrame(parent, text="📂 Local Files & Update Verification (Check modification times)", padding="8")
+        table_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        
+        columns = ("file", "status", "size", "mtime", "desc")
+        self.file_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=8)
+        
+        self.file_tree.heading("file", text="File Name")
+        self.file_tree.heading("status", text="Status")
+        self.file_tree.heading("size", text="File Size")
+        self.file_tree.heading("mtime", text="Last Modified (Date & Time)")
+        self.file_tree.heading("desc", text="Role & Purpose")
+        
+        self.file_tree.column("file", width=180, anchor=tk.W)
+        self.file_tree.column("status", width=110, anchor=tk.CENTER)
+        self.file_tree.column("size", width=100, anchor=tk.E)
+        self.file_tree.column("mtime", width=180, anchor=tk.CENTER)
+        self.file_tree.column("desc", width=280, anchor=tk.W)
+        
+        tree_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.file_tree.yview)
+        self.file_tree.configure(yscrollcommand=tree_scroll.set)
+        
+        self.file_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # --- Changelog / What's New Frame ---
+        notes_frame = ttk.LabelFrame(parent, text=f"✨ What's New in Version {curr_ver}", padding="8")
+        notes_frame.pack(fill=tk.X)
+        
+        features = self.version_info.get("features", [])
+        for feat in features:
+            f_row = ttk.Frame(notes_frame)
+            f_row.pack(fill=tk.X, pady=1)
+            ttk.Label(f_row, text="• ", font=('Arial', 10, 'bold'), foreground="#22863a").pack(side=tk.LEFT)
+            ttk.Label(f_row, text=feat, font=('Arial', 10)).pack(side=tk.LEFT, fill=tk.X)
+            
+        self.refresh_file_integrity()
+
+    def refresh_file_integrity(self):
+        """Scans local workspace files to display exact sizes and modification timestamps"""
+        if not hasattr(self, 'file_tree'):
+            return
+            
+        # Clear existing items
+        for item in self.file_tree.get_children():
+            self.file_tree.delete(item)
+            
+        files_to_check = [
+            ("main.py", "Core Controller & GUI"),
+            ("ldplayer_automation.py", "LDPlayer ADB Automation Engine"),
+            ("easyearn_client.py", "EasyEarn API & Stealth Browser"),
+            ("version.json", "Version & Release Manifest"),
+            ("updater.py", "GitHub & ZIP Updater Engine"),
+            ("UPDATE.bat", "Windows 1-Click Update Script"),
+            ("run.bat", "Bot Launcher Script"),
+            ("config.json", "Saved Configuration (LDPlayer Path)"),
+            ("token.txt", "Private GitHub Access Token"),
+        ]
+        
+        for filename, desc in files_to_check:
+            if os.path.exists(filename):
+                status = "✅ Present"
+                try:
+                    bytes_size = os.path.getsize(filename)
+                    if bytes_size >= 1024:
+                        size_str = f"{bytes_size / 1024:.1f} KB"
+                    else:
+                        size_str = f"{bytes_size} B"
+                except Exception:
+                    size_str = "Unknown"
+                    
+                try:
+                    mtime = os.path.getmtime(filename)
+                    mtime_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    mtime_str = "Unknown"
+            else:
+                if filename in ("token.txt", "config.json"):
+                    status = "ℹ️ Optional"
+                else:
+                    status = "⚠️ Missing"
+                size_str = "-"
+                mtime_str = "-"
+                
+            self.file_tree.insert("", tk.END, values=(filename, status, size_str, mtime_str, desc))
+
+    def run_update_utility(self):
+        """Launch the update utility in an external CMD window"""
+        try:
+            import subprocess
+            if os.path.exists("UPDATE.bat"):
+                subprocess.Popen(["cmd.exe", "/c", "start", "UPDATE.bat"])
+                self.log("🚀 Launched UPDATE.bat in a new command window.", 'info')
+            elif os.path.exists("updater.py"):
+                subprocess.Popen(["cmd.exe", "/c", "start", "python", "updater.py"])
+                self.log("🚀 Launched updater.py in a new command window.", 'info')
+            else:
+                messagebox.showerror("Error", "Neither UPDATE.bat nor updater.py was found.")
+        except Exception as e:
+            messagebox.showerror("Launch Error", f"Could not launch updater: {e}")
+
+    def open_bot_directory(self):
+        """Open the local folder containing the bot files"""
+        try:
+            cur_dir = os.getcwd()
+            if sys.platform == 'win32':
+                os.startfile(cur_dir)
+            else:
+                import subprocess
+                subprocess.Popen(['xdg-open', cur_dir])
+        except Exception as e:
+            messagebox.showinfo("Bot Folder", f"Bot directory:\n{os.getcwd()}")
     
     # ============================================
     # UI Methods
@@ -192,37 +437,88 @@ class InstagramAutomationController:
         if key in self.stats_labels:
             self.stats_labels[key].config(text=str(value))
     
+    def _bind_auto_save(self, var):
+        """Automatically save config whenever a Tk variable changes"""
+        def _on_change(*args):
+            if hasattr(self, '_config_loaded') and self._config_loaded:
+                self.save_config(show_alert=False)
+        if hasattr(var, "trace_add"):
+            var.trace_add("write", _on_change)
+        elif hasattr(var, "trace"):
+            var.trace("w", _on_change)
+
+    def detect_ldplayer_path(self) -> str:
+        """Auto-detect common LDPlayer 9 / 4 installation paths on Windows"""
+        candidates = [
+            r"C:\LDPlayer\LDPlayer9\dnplayer.exe",
+            r"D:\LDPlayer\LDPlayer9\dnplayer.exe",
+            r"E:\LDPlayer\LDPlayer9\dnplayer.exe",
+            r"C:\leidian\LDPlayer9\dnplayer.exe",
+            r"D:\leidian\LDPlayer9\dnplayer.exe",
+            r"E:\leidian\LDPlayer9\dnplayer.exe",
+            r"C:\leidian\LDPlayer4.0\dnplayer.exe",
+            r"D:\leidian\LDPlayer4.0\dnplayer.exe",
+            r"C:\LDPlayer\LDPlayer.exe",
+            r"D:\LDPlayer\LDPlayer.exe",
+            r"C:\Program Files\LDPlayer\LDPlayer.exe",
+            r"C:\Program Files (x86)\LDPlayer\LDPlayer.exe",
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+        return r"C:\LDPlayer\LDPlayer9\dnplayer.exe"
+
     def browse_ldplayer(self):
-        """Browse for LDPlayer executable"""
+        """Browse for LDPlayer executable and instantly persist choice"""
         from tkinter import filedialog
         path = filedialog.askopenfilename(
-            title="Select LDPlayer.exe",
-            filetypes=[("Executable", "*.exe")]
+            title="Select LDPlayer or dnplayer executable",
+            filetypes=[
+                ("LDPlayer Executable", "*.exe"),
+                ("All Files", "*.*")
+            ]
         )
         if path:
-            self.ldplayer_path.set(path)
-            self.log(f"LDPlayer path set", 'info')
+            normalized = os.path.normpath(path)
+            self.ldplayer_path.set(normalized)
+            self.ldplayer.ldplayer_path = normalized
+            self.save_config(show_alert=False)
+            self.log(f"💾 LDPlayer path saved: {normalized}", 'success')
     
     def clear_log(self):
         self.log_text.delete(1.0, tk.END)
     
     def load_config(self):
-        """Load configuration"""
+        """Load configuration from config.json or detect default LDPlayer installation"""
+        loaded = False
         try:
             if os.path.exists('config.json'):
-                with open('config.json', 'r') as f:
+                with open('config.json', 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                    self.ldplayer_path.set(config.get('ldplayer_path', 'C:\\LDPlayer\\LDPlayer.exe'))
+                    saved_path = config.get('ldplayer_path')
+                    if saved_path:
+                        self.ldplayer_path.set(os.path.normpath(saved_path))
                     self.instance_name.set(config.get('instance_name', 'LDPlayer'))
                     self.instance_index.set(config.get('instance_index', '0'))
                     self.auto_mode.set(config.get('auto_mode', True))
                     self.headless_mode.set(config.get('headless_mode', False))
-                self.log("Configuration loaded", 'info')
+                    loaded = True
+                self.log(f"Configuration loaded (LDPlayer: {self.ldplayer_path.get()})", 'info')
         except Exception as e:
             self.log(f"Config load error: {e}", 'error')
+
+        if not loaded:
+            detected = self.detect_ldplayer_path()
+            if detected:
+                self.ldplayer_path.set(detected)
+            # Save the initial configuration so config.json is created right away
+            self.save_config(show_alert=False)
+            
+        # Update ldplayer instance with loaded path
+        self.ldplayer.ldplayer_path = self.ldplayer_path.get()
     
-    def save_config(self):
-        """Save configuration"""
+    def save_config(self, show_alert: bool = True):
+        """Save configuration to config.json"""
         try:
             config = {
                 'ldplayer_path': self.ldplayer_path.get(),
@@ -231,12 +527,14 @@ class InstagramAutomationController:
                 'auto_mode': self.auto_mode.get(),
                 'headless_mode': self.headless_mode.get()
             }
-            with open('config.json', 'w') as f:
+            with open('config.json', 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2)
-            self.log("Configuration saved", 'success')
-            messagebox.showinfo("Success", "Configuration saved!")
+            if show_alert:
+                self.log("Configuration saved", 'success')
+                messagebox.showinfo("Success", "Configuration saved!")
         except Exception as e:
-            self.log(f"Save error: {e}", 'error')
+            if show_alert:
+                self.log(f"Save error: {e}", 'error')
     
     def test_connection(self):
         """Test connections to EasyEarn and LDPlayer"""
@@ -447,8 +745,12 @@ class InstagramAutomationController:
         self.log("⏹️ Automation stopped.", 'warning')
     
     def on_closing(self):
-        """Cleanly handle application window exit"""
+        """Cleanly handle application window exit and guarantee config is saved"""
         self.is_running = False
+        try:
+            self.save_config(show_alert=False)
+        except Exception:
+            pass
         try:
             self.easyearn.close()
         except Exception:
