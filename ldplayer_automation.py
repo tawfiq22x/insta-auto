@@ -333,19 +333,74 @@ class LDPlayerAutomation:
 
         return None
 
+    def set_clipboard(self, text: str) -> bool:
+        """
+        Copy text to BOTH:
+        1. Windows Host OS Clipboard (via ctypes Win32 API)
+           LDPlayer automatically syncs the host Windows clipboard into Android,
+           wiping out any previous user copy/paste items!
+        2. LDPlayer Android Emulator Clipboard (via ADB service call / cmd clipboard)
+        """
+        success = False
+        
+        # 1. Windows Host Clipboard (ctypes Win32)
+        try:
+            import ctypes
+            if hasattr(ctypes, 'windll') and hasattr(ctypes.windll, 'user32'):
+                user32 = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+                for _ in range(5):
+                    if user32.OpenClipboard(None):
+                        user32.EmptyClipboard()
+                        data = text.encode('utf-16le') + b'\x00\x00'
+                        h_mem = kernel32.GlobalAlloc(0x0042, len(data)) # GMEM_MOVEABLE | GMEM_ZEROINIT
+                        p_mem = kernel32.GlobalLock(h_mem)
+                        ctypes.memmove(p_mem, data, len(data))
+                        kernel32.GlobalUnlock(h_mem)
+                        user32.SetClipboardData(13, h_mem) # CF_UNICODETEXT = 13
+                        user32.CloseClipboard()
+                        success = True
+                        break
+                    time.sleep(0.05)
+        except Exception:
+            pass
+
+        # 2. Android Emulator Clipboard via cmd clipboard
+        try:
+            escaped = text.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$')
+            self._run_adb(f'shell cmd clipboard set text "{escaped}"')
+            success = True
+        except Exception:
+            pass
+
+        # 3. Android Emulator Clipboard via service call
+        try:
+            self._run_adb(f'shell service call clipboard 2 i32 1 s16 "com.android.shell" s16 "{text}"')
+            success = True
+        except Exception:
+            pass
+
+        return success
+
     def enter_password(self, password: str, fallback_ratio=(0.50, 0.35)) -> bool:
         """
         Specifically handles Instagram password entry:
-        1. Accurately focuses password field via password="true", resource-id or hint
-        2. Clears previous text thoroughly without typing stray characters
-        3. Enters password via safely escaped ADB input text (never touches host clipboard)
-        4. Dismisses software keyboard so 'Next' button is immediately visible
-        5. Does not stall on plaintext verification (since Android masks passwords)
+        1. Copies password to Windows & Android clipboard FIRST (wiping any previous 'last paste')
+        2. Accurately focuses password field via password="true", resource-id or hint
+        3. Clears previous text thoroughly without typing stray characters
+        4. Pastes the copied password and types via ADB input text as needed
+        5. Dismisses software keyboard so 'Next' button is immediately visible
         """
         if not password:
             print("⚠️ Warning: Empty password passed to enter_password!")
             return False
 
+        # Step 1: Copy password to system and emulator clipboard first!
+        print(f"📋 Copying password to clipboard ({len(password)} characters)...")
+        self.set_clipboard(password)
+        time.sleep(0.2)
+
+        # Step 2: Focus the password field
         coords = self.find_edit_text_coordinates(hint_keywords=["password", "create a password", "choose a password"], is_password=True)
         if coords:
             cx, cy = coords
@@ -361,12 +416,21 @@ class LDPlayerAutomation:
         self._clear_text_field(40)
         time.sleep(0.15)
 
-        # Enter password purely via escaped ADB input text
-        print(f"🔑 Typing password ({len(password)} characters)...")
-        self._type_text(password)
-        time.sleep(0.4)
+        # Step 3: Paste the password!
+        print(f"📋 Pasting copied password into Instagram...")
+        # Since password was just explicitly copied to clipboard,
+        # KEYCODE_PASTE will paste the exact password and NEVER the user's old clipboard!
+        self._run_adb("shell input keyevent 279") # KEYCODE_PASTE
+        time.sleep(0.25)
 
-        # Dismiss soft keyboard to reveal 'Next' button
+        # Step 4: If field is still empty, type directly via ADB input text
+        ui_check = self.dump_ui()
+        if 'password="true"' in ui_check and ('text=""' in ui_check or 'hint=' in ui_check):
+            print("⌨️ Typing password via ADB text fallback...")
+            self._type_text(password)
+            time.sleep(0.3)
+
+        # Step 5: Dismiss soft keyboard to reveal 'Next' button
         self._run_adb("shell input keyevent 111") # KEYCODE_ESCAPE
         time.sleep(0.2)
         return True
