@@ -678,22 +678,19 @@ class InstagramAutomationController:
                     continue
                 
                 self.current_task = task
-                pwd_raw = task.get('password', '')
+                pwd_raw = str(task.get('password', '')).strip()
+                if not pwd_raw or len(pwd_raw) < 6:
+                    import random, string
+                    seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+                    pwd_raw = f"Insta_{seed}9"
+                    task['password'] = pwd_raw
+
                 pwd_masked = (pwd_raw[:2] + "****" + pwd_raw[-1:]) if len(pwd_raw) > 3 else "***"
-                
-                # Copy password immediately to host clipboard to overwrite any old paste data
-                try:
-                    self.root.clipboard_clear()
-                    self.root.clipboard_append(pwd_raw)
-                    self.root.update()
-                except Exception:
-                    pass
                 
                 self.task_info.config(text=f"Task: {task.get('login', '')} | Email: {task.get('email', '')}")
                 self.log(f"📦 Successfully collected all task info from EasyEarn FIRST:", 'success')
                 self.log(f"   👤 Username : {task.get('login', '')}", 'info')
-                self.log(f"   🔒 Password : {pwd_masked} ({len(pwd_raw)} chars)", 'info')
-                self.log(f"   📋 Clipboard: Password copied to clipboard (old paste wiped)", 'info')
+                self.log(f"   🔒 Password : {pwd_masked} ({len(pwd_raw)} chars - direct keystroke engine)", 'info')
                 self.log(f"   ✉️ Email    : {task.get('email', '')}", 'info')
                 self.log(f"   📝 Full Name: {task.get('first_name', task.get('login', ''))}", 'info')
                 

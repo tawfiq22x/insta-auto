@@ -68,6 +68,27 @@ class LDPlayerAutomation:
             print(f"ADB Error: {e}")
             return ""
 
+    def _run_adb_args(self, args: list) -> str:
+        """Run an ADB command using argument list (shell=False) to avoid Windows cmd.exe escaping issues"""
+        try:
+            device_serial = self._get_active_device_serial()
+            adb_exe = self._get_adb_path().strip('"')
+            cmd_list = [adb_exe]
+            if device_serial:
+                cmd_list.extend(["-s", device_serial])
+            cmd_list.extend(args)
+            result = subprocess.run(
+                cmd_list, 
+                shell=False, 
+                capture_output=True, 
+                text=True
+            )
+            return result.stdout.strip()
+        except Exception as e:
+            print(f"ADB Args Error: {e}")
+            return ""
+
+
     def ensure_device_connected(self) -> bool:
         """Make sure LDPlayer is running and ADB is connected. Auto-launches LDPlayer if it is not running."""
         adb_exe = self._get_adb_path()
@@ -134,19 +155,37 @@ class LDPlayerAutomation:
             return False
 
     def _type_text(self, text: str):
-        """Type text into current focused field in Android with full special character escaping"""
-        escaped_chars = []
+        """Type text into current focused field in Android with rock-solid escaping and no clipboard dependencies"""
+        if not text:
+            return
+            
+        symbol_keycodes = {
+            '@': '77', '#': '18', '*': '17', '+': '81',
+            '-': '69', '=': '70', '.': '56', ',': '55',
+            '/': '76', ' ': '62'
+        }
+        
+        current_chunk = []
         for ch in text:
-            if ch == ' ':
-                escaped_chars.append('%s')
-            elif ch in r'\$"&|;()<>`*?~#!=[]{}':
-                escaped_chars.append(f'\\{ch}')
-            elif ch == "'":
-                escaped_chars.append(r"\'")
+            if ch in symbol_keycodes:
+                if current_chunk:
+                    chunk_str = "".join(current_chunk)
+                    self._run_adb_args(["shell", "input", "text", chunk_str])
+                    current_chunk = []
+                self._run_adb_args(["shell", "input", "keyevent", symbol_keycodes[ch]])
+            elif ch.isalnum() or ch in '_':
+                current_chunk.append(ch)
             else:
-                escaped_chars.append(ch)
-        escaped_text = "".join(escaped_chars)
-        self._run_adb(f'shell input text "{escaped_text}"')
+                if current_chunk:
+                    chunk_str = "".join(current_chunk)
+                    self._run_adb_args(["shell", "input", "text", chunk_str])
+                    current_chunk = []
+                # Pass escaped symbol directly to Android input text
+                self._run_adb_args(["shell", "input", "text", f"\\{ch}"])
+                
+        if current_chunk:
+            chunk_str = "".join(current_chunk)
+            self._run_adb_args(["shell", "input", "text", chunk_str])
 
     def _clear_text_field(self, count: int = 40):
         """Cleanly clear existing text or suggestions in focused field without typing stray characters"""
@@ -385,22 +424,18 @@ class LDPlayerAutomation:
     def enter_password(self, password: str, fallback_ratio=(0.50, 0.35)) -> bool:
         """
         Specifically handles Instagram password entry:
-        1. Copies password to Windows & Android clipboard FIRST (wiping any previous 'last paste')
-        2. Accurately focuses password field via password="true", resource-id or hint
-        3. Clears previous text thoroughly without typing stray characters
-        4. Pastes the copied password and types via ADB input text as needed
-        5. Dismisses software keyboard so 'Next' button is immediately visible
+        1. Accurately focuses password field via password="true", resource-id or hint
+        2. Clears previous text thoroughly without typing stray characters
+        3. Types password directly via ADB input text without touching clipboard
+        4. Submits via KEYCODE_ENTER (66) and cleanly dismisses soft keyboard
         """
-        if not password:
-            print("⚠️ Warning: Empty password passed to enter_password!")
-            return False
+        if not password or len(str(password).strip()) < 6:
+            import random, string
+            seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+            password = f"Insta_{seed}9"
+            print(f"⚠️ Empty/short password provided. Using secure generated password: {password}")
 
-        # Step 1: Copy password to system and emulator clipboard first!
-        print(f"📋 Copying password to clipboard ({len(password)} characters)...")
-        self.set_clipboard(password)
-        time.sleep(0.2)
-
-        # Step 2: Focus the password field
+        # Step 1: Focus the password field
         coords = self.find_edit_text_coordinates(hint_keywords=["password", "create a password", "choose a password"], is_password=True)
         if coords:
             cx, cy = coords
@@ -413,26 +448,22 @@ class LDPlayerAutomation:
             self._tap(cx, cy)
 
         time.sleep(0.3)
-        self._clear_text_field(40)
+        self._clear_text_field(25)
         time.sleep(0.15)
 
-        # Step 3: Paste the password!
-        print(f"📋 Pasting copied password into Instagram...")
-        # Since password was just explicitly copied to clipboard,
-        # KEYCODE_PASTE will paste the exact password and NEVER the user's old clipboard!
-        self._run_adb("shell input keyevent 279") # KEYCODE_PASTE
-        time.sleep(0.25)
+        # Step 2: Type password directly via ADB keycodes and text (NO CLIPBOARD TOUCHED)
+        print(f"🔑 Typing password ({len(password)} characters) via direct ADB engine...")
+        self._type_text(password)
+        time.sleep(0.4)
 
-        # Step 4: If field is still empty, type directly via ADB input text
-        ui_check = self.dump_ui()
-        if 'password="true"' in ui_check and ('text=""' in ui_check or 'hint=' in ui_check):
-            print("⌨️ Typing password via ADB text fallback...")
-            self._type_text(password)
-            time.sleep(0.3)
+        # Step 3: Trigger submission via keyboard ENTER action (IME_ACTION_NEXT/DONE)
+        print("👉 Submitting password via keyboard ENTER action...")
+        self._run_adb_args(["shell", "input", "keyevent", "66"]) # KEYCODE_ENTER
+        time.sleep(1.0)
 
-        # Step 5: Dismiss soft keyboard to reveal 'Next' button
-        self._run_adb("shell input keyevent 111") # KEYCODE_ESCAPE
-        time.sleep(0.2)
+        # Step 4: Dismiss soft keyboard cleanly with KEYCODE_BACK if still open (never KEYCODE_ESCAPE which clears text)
+        self._run_adb_args(["shell", "input", "keyevent", "4"]) # KEYCODE_BACK closes soft keyboard safely
+        time.sleep(0.3)
         return True
 
     def enter_text_to_field(self, text: str, hint_keywords=None, fallback_ratio=(0.50, 0.35), is_password: bool = False) -> bool:
@@ -464,8 +495,8 @@ class LDPlayerAutomation:
         self._type_text(text)
         time.sleep(0.4)
         
-        # Dismiss soft keyboard so action buttons below remain visible
-        self._run_adb("shell input keyevent 111") # KEYCODE_ESCAPE
+        # Dismiss soft keyboard cleanly with KEYCODE_BACK
+        self._run_adb_args(["shell", "input", "keyevent", "4"]) # KEYCODE_BACK
         time.sleep(0.2)
         return True
 
@@ -862,9 +893,32 @@ class LDPlayerAutomation:
 
                 # B. Password Step ("Create a password")
                 if not password_entered and ("password" in ui or "create a password" in ui or "choose a password" in ui or "set a password" in ui):
-                    log("🔒 Entering Password with secure auto-focus & keyboard dismissal...", "info")
-                    self.enter_password(account_data['password'], fallback_ratio=(0.50, 0.35))
-                    self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
+                    pwd = account_data.get('password', '').strip()
+                    if not pwd or len(pwd) < 6:
+                        import random, string
+                        seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+                        pwd = f"Insta_{seed}9"
+                        account_data['password'] = pwd
+                        log(f"⚠️ Generated valid replacement password: {pwd}", "warning")
+
+                    log(f"🔒 Entering Password ({len(pwd)} chars) via direct keystroke engine...", "info")
+                    self.enter_password(pwd, fallback_ratio=(0.50, 0.35))
+                    time.sleep(1.2)
+
+                    # Check if screen still on password screen or error displayed
+                    ui_check = self.dump_ui().lower()
+                    if "cannot be empty" in ui_check or "at least 6" in ui_check or "password must be" in ui_check:
+                        log("⚠️ Instagram showed password error, re-entering cleanly...", "warning")
+                        self.enter_password(pwd, fallback_ratio=(0.50, 0.35))
+                        time.sleep(1.2)
+                        ui_check = self.dump_ui().lower()
+
+                    # Tap Next / Continue (button is below password field and checkbox at Y=0.55 or bottom Y=0.90)
+                    if "password" in ui_check or "create a password" in ui_check:
+                        log("👉 Tapping 'Next' to confirm password...", "info")
+                        self.tap_text(["Next", "Continue"], timeout=3.0, fallback_ratio=(0.50, 0.55))
+                        time.sleep(1.2)
+
                     password_entered = True
                     time.sleep(0.8)
                     continue

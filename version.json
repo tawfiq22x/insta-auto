@@ -1,13 +1,13 @@
 {
-  "version": "1.4.5",
-  "release_date": "2026-09-11 17:45",
-  "build_id": "v1.4.5-rel",
+  "version": "1.4.6",
+  "release_date": "2026-09-11 18:00",
+  "build_id": "v1.4.6-rel",
   "features": [
-    "Password Clipboard Sync: Copies password to Windows and Android clipboards to erase any prior clipboard content, then pastes directly into Instagram",
+    "Direct Keystroke Typing Engine: Completely eliminated clipboard reliance and KEYCODE_PASTE for password entry, preventing stale clipboard data from ever pasting into Instagram",
+    "Password Verification & Soft Keyboard Handling: Replaced KEYCODE_ESCAPE with KEYCODE_BACK and IME ENTER (keycode 66), ensuring text is never cleared and preventing 'password cannot be empty' errors",
+    "Accurate Next Button Geometry: Fixed Next button coordinate fallback on password screen to hit the real button below fields and checkboxes",
     "Pre-fetching pipeline: extracts and verifies all credentials from EasyEarn FIRST before feeding to Instagram",
     "Smart Birthday wheel automation: auto-scrolls Year backwards ~20-25 years and confirms DatePicker dialogs",
-    "Clean input field wiping: fixed backspace logic to prevent typing stray characters like 'a'",
-    "High-speed registration workflow: streamlined screen transitions and instant field clearing",
-    "Added Version & Updates tab with live update status and file integrity check"
+    "Clean input field wiping: fixed backspace logic to prevent typing stray characters like 'a'"
   ]
 }
