@@ -63,51 +63,44 @@ class EasyEarnClient:
             options.add_argument('--headless=new')
         options.add_argument('--start-maximized')
         
-        # Method 1: Modern Selenium Native Manager
-        self.log("🌐 Attempting to launch Chrome browser...", "info")
+        # Launch directly with ChromeDriverManager for guaranteed stability
+        self.log("🌐 Launching Chrome browser via ChromeDriverManager...", "info")
         try:
-            self.driver = webdriver.Chrome(options=options)
-            self.log("✅ Chrome launched successfully via Selenium Manager!", "success")
-        except Exception as e_native:
-            self.log(f"⚠️ Native Chrome launch failed: {str(e_native)[:80]}. Trying driver manager...", "warning")
+            driver_path = ChromeDriverManager().install()
+            if "THIRD_PARTY_NOTICES" in driver_path or not driver_path.endswith(".exe"):
+                driver_dir = os.path.dirname(driver_path)
+                for root, dirs, files in os.walk(driver_dir):
+                    for file in files:
+                        if file.lower() == "chromedriver.exe":
+                            driver_path = os.path.join(root, file)
+                            break
+            service = ChromeService(driver_path)
+            self.driver = webdriver.Chrome(service=service, options=options)
+            self.log("✅ Chrome launched successfully via ChromeDriverManager!", "success")
+        except Exception as e_manager:
+            self.log(f"⚠️ ChromeDriverManager failed: {str(e_manager)[:80]}. Trying Edge...", "warning")
             
-            # Method 2: WebDriver Manager fallback
+            # Fallback to Microsoft Edge (Pre-installed on every Windows PC!)
+            self.log("🔄 Attempting to launch Microsoft Edge (built-in Windows Chromium)...", "info")
             try:
-                driver_path = ChromeDriverManager().install()
-                if "THIRD_PARTY_NOTICES" in driver_path or not driver_path.endswith(".exe"):
-                    driver_dir = os.path.dirname(driver_path)
-                    for root, dirs, files in os.walk(driver_dir):
-                        for file in files:
-                            if file.lower() == "chromedriver.exe":
-                                driver_path = os.path.join(root, file)
-                                break
-                service = ChromeService(driver_path)
-                self.driver = webdriver.Chrome(service=service, options=options)
-                self.log("✅ Chrome launched via ChromeDriverManager!", "success")
-            except Exception as e_manager:
-                self.log(f"⚠️ ChromeDriverManager also failed: {str(e_manager)[:80]}", "warning")
-                
-                # Method 3: Fallback to Microsoft Edge (Pre-installed on every Windows PC!)
-                self.log("🔄 Attempting to launch Microsoft Edge (built-in Windows Chromium)...", "info")
-                try:
-                    from selenium.webdriver.edge.options import Options as EdgeOptions
-                    edge_options = EdgeOptions()
-                    edge_options.add_experimental_option("detach", True)
-                    edge_user_data = os.path.join(os.getcwd(), "BotEdgeProfile")
-                    edge_options.add_argument(f"--user-data-dir={edge_user_data}")
-                    edge_options.add_argument("--disable-blink-features=AutomationControlled")
-                    edge_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-                    edge_options.add_argument("--no-sandbox")
-                    edge_options.add_argument("--remote-allow-origins=*")
-                    if self.headless:
-                        edge_options.add_argument('--headless=new')
-                    edge_options.add_argument('--start-maximized')
-                    self.driver = webdriver.Edge(options=edge_options)
-                    self.log("✅ Microsoft Edge launched successfully!", "success")
-                except Exception as e_edge:
-                    self.log(f"❌ Critical error: Could not launch Chrome or Edge: {e_edge}", "error")
-                    self.driver = None
-                    raise
+                from selenium.webdriver.edge.options import Options as EdgeOptions
+                edge_options = EdgeOptions()
+                edge_options.add_experimental_option("detach", True)
+                edge_user_data = os.path.join(os.getcwd(), "BotEdgeProfile")
+                edge_options.add_argument(f"--user-data-dir={edge_user_data}")
+                edge_options.add_argument("--disable-blink-features=AutomationControlled")
+                edge_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                edge_options.add_argument("--no-sandbox")
+                edge_options.add_argument("--remote-allow-origins=*")
+                if self.headless:
+                    edge_options.add_argument('--headless=new')
+                edge_options.add_argument('--start-maximized')
+                self.driver = webdriver.Edge(options=edge_options)
+                self.log("✅ Microsoft Edge launched successfully!", "success")
+            except Exception as e_edge:
+                self.log(f"❌ Critical error: Could not launch Chrome or Edge: {e_edge}", "error")
+                self.driver = None
+                raise
 
         # Extra stealth script injection
         if self.driver:
@@ -388,9 +381,16 @@ class EasyEarnClient:
             self.log(f"Error checking email code: {e}", "warning")
             return None
             
-    def submit_2fa_key(self, twofa_key: str) -> bool:
-        """Submit the 2FA key into EasyEarn wizard Step 2"""
+    def submit_2fa_key(self, twofa_key: str) -> Optional[str]:
+        """Submit the 2FA key into EasyEarn wizard Step 2 and return the generated OTP code"""
         try:
+            if not self.driver:
+                self.log("🌐 Browser not connected. Starting browser for 2FA...", "info")
+                self.start_browser()
+                if self.task_id:
+                    self.driver.get(f"{self.base_url}/task/{self.task_id}")
+                    time.sleep(3)
+
             twofa_clean = twofa_key.strip().replace(" ", "")
             self.log(f"🔐 Submitting 2FA Secret to EasyEarn: {twofa_clean}", "info")
             
@@ -423,19 +423,28 @@ class EasyEarnClient:
             return true;
             """
             self.driver.execute_script(script)
-            time.sleep(3)
+            time.sleep(2)
             
-            # Verify OTP generated
-            otp_val = self.driver.execute_script("""
-            var el = document.getElementById('otpValue');
-            return el ? (el.innerText || el.textContent || '').trim() : '';
-            """)
+            # Poll for OTP code generated in #otpValue
+            otp_val = ""
+            for _ in range(8):
+                otp_val = self.driver.execute_script("""
+                var el = document.getElementById('otpValue');
+                return el ? (el.innerText || el.textContent || '').trim() : '';
+                """)
+                if otp_val and len(otp_val) == 6:
+                    break
+                time.sleep(1)
+
             if otp_val:
-                self.log(f"✅ Generated 2FA OTP code on EasyEarn: {otp_val}", "success")
-            return True
+                self.log(f"✅ EasyEarn generated 6-digit OTP code: {otp_val}", "success")
+                return otp_val
+            else:
+                self.log("⚠️ 2FA Secret submitted, but could not read OTP code.", "warning")
+                return None
         except Exception as e:
             self.log(f"Submit 2FA error: {e}", "error")
-            return False
+            return None
             
     def submit_report(self) -> bool:
         """Submit the final report to complete the task using EasyEarn's buildAndSubmitReport"""

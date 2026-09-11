@@ -406,6 +406,7 @@ class InstagramAutomationController:
                     account_data=account_data,
                     otp_fetcher=self.easyearn.get_email_code,
                     twofa_enabled=True,
+                    easyearn_client=self.easyearn,
                     log_cb=self.log
                 )
                 
@@ -414,23 +415,13 @@ class InstagramAutomationController:
                     self.update_stats('accounts_created', self.accounts_created)
                     self.log(f"✅ Account created: {result['username']}", 'success')
                     
-                    # Submit 2FA key back to EasyEarn
-                    if result.get('twofa_key'):
-                        self.log("🔐 Submitting 2FA key to EasyEarn...", 'info')
-                        if self.easyearn.submit_2fa_key(result['twofa_key']):
-                            self.log("✅ 2FA key submitted", 'success')
-                            
-                            # Generate and submit final report
-                            self.log("📤 Submitting final report...", 'info')
-                            if self.easyearn.submit_report():
-                                self.log("✅ Task completed!", 'success')
-                                
-                                # Update earnings
-                                self.update_stats('earnings', f"${self.accounts_created * 0.025:.3f}")
-                            else:
-                                self.log("⚠️ Report submission failed", 'warning')
-                        else:
-                            self.log("⚠️ 2FA key submission failed", 'warning')
+                    # Generate and submit final report on EasyEarn
+                    self.log("📤 Submitting final completion report to EasyEarn...", 'info')
+                    if self.easyearn.submit_report():
+                        self.log("✅ Task completed successfully!", 'success')
+                        self.update_stats('earnings', f"${self.accounts_created * 0.025:.3f}")
+                    else:
+                        self.log("⚠️ Report submission failed", 'warning')
                 else:
                     self.failed_accounts += 1
                     self.update_stats('failed_accounts', self.failed_accounts)
@@ -448,20 +439,24 @@ class InstagramAutomationController:
             self.stop_automation()
     
     def stop_automation(self):
-        """Stop the automation"""
+        """Stop the automation loop"""
         self.is_running = False
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.status_var.set("Stopped")
-        self.log("⏹️ Automation stopped. Closing browser...", 'warning')
-        
-        # Close the Selenium browser
+        self.log("⏹️ Automation stopped.", 'warning')
+    
+    def on_closing(self):
+        """Cleanly handle application window exit"""
+        self.is_running = False
         try:
             self.easyearn.close()
-        except:
+        except Exception:
             pass
+        self.root.destroy()
     
     def run(self):
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.mainloop()
 
 # ============================================

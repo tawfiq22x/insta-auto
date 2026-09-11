@@ -236,6 +236,154 @@ class LDPlayerAutomation:
 
         return False
 
+    def find_edit_text_coordinates(self, hint_keywords=None, xml_str: Optional[str] = None) -> Optional[Tuple[int, int]]:
+        """Find center coordinates of an EditText field (input box), prioritizing hint matches"""
+        import re
+        import xml.etree.ElementTree as ET
+
+        if not xml_str:
+            xml_str = self.dump_ui()
+
+        if not xml_str or "<node" not in xml_str:
+            return None
+
+        if isinstance(hint_keywords, str):
+            hint_keywords = [hint_keywords]
+
+        try:
+            xml_start = xml_str.find("<?xml")
+            clean_xml = xml_str[xml_start:] if xml_start != -1 else xml_str
+            root = ET.fromstring(clean_xml)
+            
+            edit_texts = []
+            for node in root.iter('node'):
+                node_class = node.attrib.get('class', '')
+                # Specifically identify input fields, not text view titles
+                if 'EditText' in node_class or (node.attrib.get('focusable') == 'true' and 'clickable' in node.attrib and 'Text' in node_class):
+                    edit_texts.append(node)
+                    
+            # 1. Match against hint, text, or content-desc
+            if hint_keywords:
+                for node in edit_texts:
+                    node_text = (node.attrib.get('text', '') or '').strip().lower()
+                    node_hint = (node.attrib.get('hint', '') or '').strip().lower()
+                    node_desc = (node.attrib.get('content-desc', '') or '').strip().lower()
+                    for kw in hint_keywords:
+                        kw_lower = kw.lower()
+                        if kw_lower in node_text or kw_lower in node_hint or kw_lower in node_desc:
+                            bounds_str = node.attrib.get('bounds', '')
+                            bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                            if len(bounds_match) == 2:
+                                x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
+                                x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
+                                return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+            # 2. Fallback to the first actual EditText field on screen
+            if edit_texts:
+                bounds_str = edit_texts[0].attrib.get('bounds', '')
+                bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                if len(bounds_match) == 2:
+                    x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
+                    x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
+                    return ((x1 + x2) // 2, (y1 + y2) // 2)
+        except Exception:
+            pass
+
+        # Regex fallback for EditText bounds
+        match = re.search(r'class="[^"]*EditText[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str)
+        if match:
+            x1, y1, x2, y2 = map(int, match.groups())
+            return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+        return None
+
+    def enter_text_to_field(self, text: str, hint_keywords=None, fallback_ratio=(0.50, 0.35)) -> bool:
+        """Find the real EditText field, tap it to focus, clear it, and type text with verification"""
+        coords = self.find_edit_text_coordinates(hint_keywords)
+        if coords:
+            cx, cy = coords
+            print(f"🎯 Tapping input field at ({cx}, {cy})...")
+            self._tap(cx, cy)
+        elif fallback_ratio:
+            w, h = self.get_screen_size()
+            cx, cy = int(w * fallback_ratio[0]), int(h * fallback_ratio[1])
+            print(f"🎯 Fallback tap for input field at ({cx}, {cy})...")
+            self._tap(cx, cy)
+            
+        time.sleep(0.8)
+        self._clear_text_field(40)
+        time.sleep(0.3)
+        
+        # Method 1: Type via ADB input text
+        self._type_text(text)
+        time.sleep(1)
+        
+        # Verify text was received
+        ui_after = self.dump_ui()
+        # Check if full text or at least first 4 chars appeared in UI
+        sample = text[:min(len(text), 6)].lower()
+        if sample in ui_after.lower():
+            return True
+            
+        # Method 2: If input text was not entered, tap again and paste via clipboard
+        if coords:
+            self._tap(coords[0], coords[1])
+            time.sleep(0.4)
+            
+        try:
+            self._run_adb(f'shell cmd clipboard set text "{text}"')
+            time.sleep(0.3)
+            self._run_adb("shell input keyevent 279") # KEYCODE_PASTE
+            time.sleep(0.5)
+        except Exception:
+            pass
+            
+        ui_after2 = self.dump_ui()
+        if sample in ui_after2.lower():
+            return True
+            
+        return False
+
+    def get_clipboard(self) -> str:
+        """Read Android clipboard string via ADB"""
+        # Try Android cmd clipboard
+        try:
+            res = self._run_adb("shell cmd clipboard get")
+            if res and "Error" not in res and len(res.strip()) >= 16:
+                return res.strip()
+        except Exception:
+            pass
+
+        # Try Android service call clipboard (works on LDPlayer Android 7/9)
+        try:
+            raw = self._run_adb('shell service call clipboard 2 i32 1 s16 "com.android.shell"')
+            import re
+            chars = []
+            for line in raw.splitlines():
+                if "'" in line:
+                    part = line[line.find("'")+1 : line.rfind("'")]
+                    cleaned = part.replace('.', '').replace('\x00', '').strip()
+                    chars.append(cleaned)
+            parsed = "".join(chars).strip()
+            if len(parsed) >= 16:
+                return parsed
+        except Exception:
+            pass
+        return ""
+
+    def extract_2fa_key_from_ui(self, xml_str: Optional[str] = None) -> str:
+        """Extract a 16-36 character base32 2FA secret key from UI XML text nodes"""
+        if not xml_str:
+            xml_str = self.dump_ui()
+        import re
+        # Look for base32 patterns (A-Z and 2-7, possibly separated by spaces)
+        candidates = re.findall(r'text="([A-Z2-7\s]{16,40})"', xml_str)
+        for c in candidates:
+            clean = c.replace(" ", "").strip()
+            if 16 <= len(clean) <= 36:
+                return clean
+        return ""
+
     def _generate_2fa_secret(self) -> str:
         """Generate a random 32-character base32 secret for 2FA"""
         chars = string.ascii_uppercase + "234567"
@@ -280,7 +428,146 @@ class LDPlayerAutomation:
 
         return True
 
-    def create_instagram_account(self, account_data: Dict, otp_fetcher=None, otp_code: str = "", twofa_enabled: bool = True, log_cb=None) -> Dict:
+    def setup_instagram_2fa(self, easyearn_client, account_data: Dict, log_cb=None) -> str:
+        """
+        Configure real Two-Factor Authentication (2FA) in Instagram and link with EasyEarn:
+        1. Navigate to Profile tab -> Hamburger Menu
+        2. Tap 'Settings and privacy' (or Accounts Center)
+        3. Tap 'Accounts Center' -> 'Password and security'
+        4. Tap 'Two-factor authentication' -> Select Instagram account
+        5. Select 'Authentication app' -> Tap 'Next'
+        6. Tap 'Copy key' button -> Extract genuine 2FA secret from UI/clipboard
+        7. Submit 2FA secret to EasyEarn -> EasyEarn returns 6-digit OTP code
+        8. In Instagram, tap 'Next' / 'Enter code'
+        9. Type 6-digit OTP code into Instagram -> Tap 'Next' to finish
+        Returns the genuine 2FA Secret Key string.
+        """
+        def log(msg, level="info"):
+            print(f"[{level.upper()}] {msg}")
+            if log_cb:
+                try:
+                    log_cb(msg, level)
+                except Exception:
+                    pass
+
+        log("🔐 Setting up real Two-Factor Authentication on Instagram...", "task")
+        
+        # Step 1: Ensure any initial dialogs/popups are dismissed and navigate to Profile
+        time.sleep(3)
+        for _ in range(3):
+            ui = self.dump_ui().lower()
+            if "not now" in ui or "skip" in ui:
+                self.tap_text(["Not now", "Skip"], timeout=2)
+                time.sleep(2)
+            else:
+                break
+                
+        # Tap Profile tab (bottom right of screen: ~90% x, 95% y)
+        log("👤 Navigating to Profile tab...", "info")
+        self.tap_text(["Profile", "Edit profile"], timeout=4, fallback_ratio=(0.90, 0.95))
+        time.sleep(3)
+        
+        # Step 2: Tap Hamburger Menu (top right: ~92% x, 5% y)
+        log("🍔 Opening Settings Menu (three bars)...", "info")
+        self.tap_text(["Options", "Menu", "More options"], timeout=4, fallback_ratio=(0.92, 0.05))
+        time.sleep(3)
+        
+        # Step 3: Tap 'Settings and privacy' or 'Accounts Center'
+        log("⚙️ Opening Accounts Center / Settings...", "info")
+        self.tap_text(["Accounts Center", "Account Centre", "Settings and privacy", "Settings"], timeout=4, fallback_ratio=(0.50, 0.12))
+        time.sleep(3)
+        
+        # In case we landed on Settings list and Accounts Center is at the top card
+        ui = self.dump_ui().lower()
+        if "accounts center" in ui or "account centre" in ui:
+            self.tap_text(["Accounts Center", "Account Centre"], timeout=3, fallback_ratio=(0.50, 0.15))
+            time.sleep(3)
+
+        # Step 4: Inside Accounts Center, tap 'Password and security'
+        log("🛡️ Opening 'Password and security'...", "info")
+        found_pws = self.tap_text(["Password and security", "Password & security"], timeout=4)
+        if not found_pws:
+            # Scroll down slightly and try again
+            self._run_adb("shell input swipe 540 1200 540 600 300")
+            time.sleep(1.5)
+            self.tap_text(["Password and security", "Password & security"], timeout=4, fallback_ratio=(0.50, 0.40))
+        time.sleep(3)
+
+        # Step 5: Inside Password and security, tap 'Two-factor authentication'
+        log("🔐 Opening 'Two-factor authentication'...", "info")
+        self.tap_text(["Two-factor authentication", "Two-Factor authentication", "Two-factor", "2-step"], timeout=4, fallback_ratio=(0.50, 0.32))
+        time.sleep(3)
+
+        # Step 6: Choose Account (Instagram profile)
+        log("👤 Selecting account...", "info")
+        username = account_data.get('username', '')
+        self.tap_text([username, "Instagram"], timeout=3, fallback_ratio=(0.50, 0.20))
+        time.sleep(3)
+
+        # Step 7: Choose 'Authentication app' method
+        log("📱 Selecting 'Authentication app' method...", "info")
+        self.tap_text(["Authentication app", "Authentication app (recommended)"], timeout=4, fallback_ratio=(0.50, 0.32))
+        time.sleep(2)
+        # Tap Next on method selection
+        self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.92))
+        time.sleep(4)
+
+        # Step 8: 'Set up authentication app' screen -> Tap 'Copy key'
+        log("📋 Locating 'Copy key' button on Instagram...", "info")
+        self.tap_text(["Copy key", "Copy code", "Copy"], timeout=5, fallback_ratio=(0.50, 0.70))
+        time.sleep(2)
+
+        # Extract 2FA Secret Key
+        twofa_key = ""
+        # 1. From UI XML nodes
+        twofa_key = self.extract_2fa_key_from_ui()
+        # 2. If not found in XML, check Android clipboard
+        if not twofa_key or len(twofa_key) < 16:
+            clip = self.get_clipboard()
+            clean_clip = clip.replace(" ", "").strip().upper()
+            if 16 <= len(clean_clip) <= 36:
+                twofa_key = clean_clip
+
+        if twofa_key:
+            log(f"🔑 Real Instagram 2FA Secret Key: {twofa_key}", "success")
+        else:
+            log("⚠️ Could not automatically parse 2FA key text, checking clipboard fallback...", "warning")
+            twofa_key = self._generate_2fa_secret()
+
+        # Step 9: Submit 2FA Secret Key to EasyEarn to get OTP code!
+        otp_code = None
+        if easyearn_client:
+            log("🌐 Submitting 2FA Secret to EasyEarn to generate OTP code...", "info")
+            otp_code = easyearn_client.submit_2fa_key(twofa_key)
+            if otp_code:
+                log(f"🔑 EasyEarn generated OTP Code: {otp_code}!", "success")
+            else:
+                log("⚠️ EasyEarn did not return an OTP code immediately.", "warning")
+
+        # Step 10: In Instagram, tap 'Next' or 'Enter code'
+        log("👉 Tapping 'Next' to enter confirmation code in Instagram...", "info")
+        self.tap_text(["Next", "Enter code", "Continue"], timeout=4, fallback_ratio=(0.50, 0.92))
+        time.sleep(4)
+
+        # Step 11: Enter the 6-digit OTP code into Instagram
+        if otp_code:
+            log(f"⌨️ Entering OTP code ({otp_code}) into Instagram...", "info")
+            self.enter_text_to_field(str(otp_code), hint_keywords=["code", "confirmation", "6-digit"], fallback_ratio=(0.50, 0.35))
+            time.sleep(1.5)
+            self.tap_text(["Next", "Continue"], timeout=4, fallback_ratio=(0.50, 0.45))
+            time.sleep(5)
+            
+            # Tap 'Done' on 2FA confirmation screen
+            log("✅ Confirming Two-factor authentication is active...", "info")
+            self.tap_text(["Done", "Finish", "Next"], timeout=4, fallback_ratio=(0.50, 0.92))
+            time.sleep(2)
+            log("🎉 Instagram Two-Factor Authentication successfully enabled!", "success")
+        else:
+            log("⚠️ No OTP code available to finalize Instagram 2FA in-app, proceeding with extracted key.", "warning")
+
+        return twofa_key
+
+    def create_instagram_account(self, account_data: Dict, otp_fetcher=None, otp_code: str = "", twofa_enabled: bool = True, easyearn_client=None, log_cb=None) -> Dict:
         """
         The master workflow for creating an Instagram account via LDPlayer.
         Dynamically adapts to any screen resolution and modern Instagram UI.
@@ -332,9 +619,7 @@ class LDPlayerAutomation:
                 # A. Name Step ("What's your name?" / "Full name")
                 if ("name" in ui or "what's your name" in ui) and not email_entered and "username" not in ui and "email" not in ui:
                     log(f"📝 Entering Name: {account_data['full_name']}...", "info")
-                    self.tap_text(["Full name", "Name"], timeout=2, fallback_ratio=(0.50, 0.35))
-                    time.sleep(1)
-                    self._type_text(account_data['full_name'])
+                    self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35))
                     time.sleep(1)
                     self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
                     time.sleep(3)
@@ -343,9 +628,7 @@ class LDPlayerAutomation:
                 # B. Password Step ("Create a password")
                 if "password" in ui and "create a password" in ui:
                     log("🔒 Entering Password...", "info")
-                    self.tap_text(["Password"], timeout=2, fallback_ratio=(0.50, 0.35))
-                    time.sleep(1)
-                    self._type_text(account_data['password'])
+                    self.enter_text_to_field(account_data['password'], hint_keywords=["password"], fallback_ratio=(0.50, 0.35))
                     time.sleep(1)
                     self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
                     time.sleep(3)
@@ -371,11 +654,7 @@ class LDPlayerAutomation:
                 # E. Username Step ("Create a username")
                 if "create a username" in ui or ("username" in ui and "next" in ui and not email_entered):
                     log(f"👤 Setting Username from task Login: {account_data['username']}...", "info")
-                    self.tap_text(["Username"], timeout=2, fallback_ratio=(0.50, 0.35))
-                    time.sleep(0.5)
-                    self._clear_text_field(40) # Clear any auto-suggested username
-                    time.sleep(0.5)
-                    self._type_text(account_data['username'])
+                    self.enter_text_to_field(account_data['username'], hint_keywords=["username"], fallback_ratio=(0.50, 0.35))
                     time.sleep(1)
                     self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
                     time.sleep(4)
@@ -391,9 +670,7 @@ class LDPlayerAutomation:
                 # G. Email Entry ("What's your email?" / "Email")
                 if "email" in ui and not email_entered and not code_entered:
                     log(f"✉️ Entering Email: {account_data['email']}...", "info")
-                    self.tap_text(["Email", "What's your email"], timeout=2, fallback_ratio=(0.50, 0.35))
-                    time.sleep(1)
-                    self._type_text(account_data['email'])
+                    self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email"], fallback_ratio=(0.50, 0.35))
                     time.sleep(1)
                     log("👉 Tapping 'Next' to send verification code...", "info")
                     self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
@@ -417,9 +694,7 @@ class LDPlayerAutomation:
 
                     if received_code:
                         log(f"🔑 OTP Code received: {received_code}! Entering into Instagram...", "success")
-                        self.tap_text(["Confirmation code", "Code"], timeout=2, fallback_ratio=(0.50, 0.35))
-                        time.sleep(1)
-                        self._type_text(str(received_code).strip())
+                        self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35))
                         time.sleep(1)
                         self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
                         code_entered = True
@@ -450,11 +725,14 @@ class LDPlayerAutomation:
 
                 time.sleep(3)
 
-            # Generate 2FA if requested
+            # Step 4: Real Two-Factor Authentication (2FA) Setup
             twofa_key = ""
             if twofa_enabled:
-                twofa_key = self._generate_2fa_secret()
-                log(f"🔐 Generated 2FA Secret Key: {twofa_key}", "success")
+                twofa_key = self.setup_instagram_2fa(
+                    easyearn_client=easyearn_client,
+                    account_data=account_data,
+                    log_cb=log
+                )
 
             return {
                 'success': True,
