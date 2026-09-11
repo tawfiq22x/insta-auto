@@ -1,12 +1,15 @@
 {
-  "version": "1.5.3",
-  "release_date": "2026-09-11 20:35",
-  "build_id": "v1.5.3-rel",
+  "version": "1.5.8",
+  "release_date": "2026-09-11 21:50",
+  "build_id": "v1.5.8-rel",
   "features": [
-    "Unidirectional Adult Year Wheel Scroll: Removed self-cancelling reverse wheel swipe bug and ensured smooth 20-30 year rollback to guarantee adult age (1998-2003)",
-    "Keyboard-Clear Birthday Wheel Access: Automatically dismisses soft keyboard before wheel scrolling so DatePicker columns are never obstructed",
-    "IME & Position-Verified Password Submission: Uses dual-trigger (Enter key + Next button at y=0.52) and verifies screen transition before advancing",
-    "Save Login Info Screen Handler: Accurately detects and confirms 'Save your login info?' before transitioning to Birthday",
-    "Adaptive Birthday Next Button Trigger: Multi-target Next button tap and advance verification to smoothly move directly into the Username step"
+    "Smart Dual-Direction Birthday Wheel Scrolling: Dynamically detects whether Year wheel requires downward or upward drag to reach adult age (1995-2002)",
+    "DatePicker Auto-Activation: Automatically taps the date display box if the wheel bottom sheet is not opened yet",
+    "Direct NumberPicker Input Bypass: Automatically inputs 1999 directly into native NumberPicker EditText if available",
+    "Age Confirmation & Error Popup Handling: Automatically detects and confirms 'Are you X years old?' dialogs and dismisses under-13 warnings",
+    "Zero Disk Footprint: Removed account collection and disk saving (no collected_accounts.txt or .csv) for total PC privacy",
+    "Live Ephemeral Credential Visibility: Passwords, Login, Full Name, and Email displayed unmasked in real time only during active task",
+    "Instant Combo Copy: One-click 'Copy Combo' button in active task bar for username:password:email:name clipboard access",
+    "IME & Position-Verified Password Submission: Uses dual-trigger (Enter key + Next button at y=0.52) and verifies screen transition before advancing"
   ]
 }

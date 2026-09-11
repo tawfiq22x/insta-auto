@@ -47,8 +47,9 @@ class InstagramAutomationController:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("🤖 Instagram Automation Suite v5.0")
-        self.root.geometry("1100x750")
-        self.root.resizable(False, False)
+        self.root.geometry("1120x800")
+        self.root.minsize(1000, 720)
+        self.root.resizable(True, True)
         
         # State
         self.is_running = False
@@ -58,11 +59,8 @@ class InstagramAutomationController:
         
         # Load version info
         self.version_info = self.get_version_info()
-        curr_ver = self.version_info.get("version", "1.4.5")
+        curr_ver = self.version_info.get("version", "1.5.7")
         self.root.title(f"🤖 Instagram Automation Suite - v{curr_ver}")
-        self.root.geometry("1120x800")
-        self.root.minsize(1000, 720)
-        self.root.resizable(True, True)
         
         # Initialize clients
         self.easyearn = EasyEarnClient(log_callback=self.log)
@@ -90,15 +88,18 @@ class InstagramAutomationController:
     def get_version_info(self) -> dict:
         """Load version and release details from version.json"""
         default_info = {
-            "version": "1.5.3",
-            "release_date": "2026-09-11 20:35",
-            "build_id": "v1.5.3-rel",
+            "version": "1.5.8",
+            "release_date": "2026-09-11 21:50",
+            "build_id": "v1.5.8-rel",
             "features": [
-                "Unidirectional Adult Year Wheel Scroll: Removed self-cancelling reverse wheel swipe bug and ensured smooth 20-30 year rollback to guarantee adult age (1998-2003)",
-                "Keyboard-Clear Birthday Wheel Access: Automatically dismisses soft keyboard before wheel scrolling so DatePicker columns are never obstructed",
-                "IME & Position-Verified Password Submission: Uses dual-trigger (Enter key + Next button at y=0.52) and verifies screen transition before advancing",
-                "Save Login Info Screen Handler: Accurately detects and confirms 'Save your login info?' before transitioning to Birthday",
-                "Adaptive Birthday Next Button Trigger: Multi-target Next button tap and advance verification to smoothly move directly into the Username step"
+                "Smart Dual-Direction Birthday Wheel Scrolling: Dynamically detects whether Year wheel requires downward or upward drag to reach adult age (1995-2002)",
+                "DatePicker Auto-Activation: Automatically taps the date display box if the wheel bottom sheet is not opened yet",
+                "Direct NumberPicker Input Bypass: Automatically inputs 1999 directly into native NumberPicker EditText if available",
+                "Age Confirmation & Error Popup Handling: Automatically detects and confirms 'Are you X years old?' dialogs and dismisses under-13 warnings",
+                "Zero Disk Footprint: Removed account collection and disk saving (no collected_accounts.txt or .csv) for total PC privacy",
+                "Live Ephemeral Credential Visibility: Passwords, Login, Full Name, and Email displayed unmasked in real time only during active task",
+                "Instant Combo Copy: One-click 'Copy Combo' button in active task bar for username:password:email:name clipboard access",
+                "IME & Position-Verified Password Submission: Uses dual-trigger (Enter key + Next button at y=0.52) and verifies screen transition before advancing"
             ]
         }
         if os.path.exists("version.json"):
@@ -112,7 +113,7 @@ class InstagramAutomationController:
 
     def setup_ui(self):
         """Build the user interface with tabs"""
-        curr_ver = self.version_info.get("version", "1.4.2")
+        curr_ver = self.version_info.get("version", "1.5.5")
         
         # Notebook for navigation tabs
         self.notebook = ttk.Notebook(self.root)
@@ -198,17 +199,43 @@ class InstagramAutomationController:
         ttk.Button(control_frame, text="🌐 Open Browser", command=self.manual_open_browser, width=15).grid(row=0, column=7, padx=4)
         
         # === Current Task ===
-        task_frame = ttk.LabelFrame(dashboard_tab, text="📋 Current Task", padding="8")
+        task_frame = ttk.LabelFrame(dashboard_tab, text="📋 Current Task (All Credentials: Login, Name, Password, Email)", padding="8")
         task_frame.grid(row=4, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=4)
         
-        self.task_info = ttk.Label(task_frame, text="No active task", font=('Arial', 11))
-        self.task_info.grid(row=0, column=0, sticky=tk.W)
+        self.task_info = ttk.Label(task_frame, text="No active task (Waiting for next task from EasyEarn...)", font=('Arial', 10, 'bold'), foreground='#9cdcfe')
+        self.task_info.grid(row=0, column=0, columnspan=9, sticky=tk.W, pady=(0, 5))
+        
+        ttk.Label(task_frame, text="👤 Login:").grid(row=1, column=0, sticky=tk.W, padx=(2, 2))
+        self.curr_login_entry = ttk.Entry(task_frame, width=16, font=('Consolas', 9))
+        self.curr_login_entry.grid(row=1, column=1, padx=(0, 6), sticky=tk.W)
+        self.curr_login_entry.insert(0, "-")
+        self.curr_login_entry.config(state='readonly')
+        
+        ttk.Label(task_frame, text="📝 Name:").grid(row=1, column=2, sticky=tk.W, padx=(2, 2))
+        self.curr_name_entry = ttk.Entry(task_frame, width=16, font=('Consolas', 9))
+        self.curr_name_entry.grid(row=1, column=3, padx=(0, 6), sticky=tk.W)
+        self.curr_name_entry.insert(0, "-")
+        self.curr_name_entry.config(state='readonly')
+        
+        ttk.Label(task_frame, text="🔒 Pass:").grid(row=1, column=4, sticky=tk.W, padx=(2, 2))
+        self.curr_pass_entry = ttk.Entry(task_frame, width=16, font=('Consolas', 9))
+        self.curr_pass_entry.grid(row=1, column=5, padx=(0, 6), sticky=tk.W)
+        self.curr_pass_entry.insert(0, "-")
+        self.curr_pass_entry.config(state='readonly')
+        
+        ttk.Label(task_frame, text="✉️ Email:").grid(row=1, column=6, sticky=tk.W, padx=(2, 2))
+        self.curr_email_entry = ttk.Entry(task_frame, width=28, font=('Consolas', 9))
+        self.curr_email_entry.grid(row=1, column=7, padx=(0, 6), sticky=(tk.W, tk.E))
+        self.curr_email_entry.insert(0, "-")
+        self.curr_email_entry.config(state='readonly')
+        
+        ttk.Button(task_frame, text="📋 Copy (User:Pass:Email)", command=self.copy_current_task_combo, width=24).grid(row=1, column=8, padx=(4, 2), sticky=tk.E)
         
         # === Log ===
         log_frame = ttk.LabelFrame(dashboard_tab, text="📝 Log", padding="5")
         log_frame.grid(row=5, column=0, columnspan=5, sticky=(tk.W, tk.E, tk.N, tk.S), pady=4)
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, width=120, height=18, 
+        self.log_text = scrolledtext.ScrolledText(log_frame, width=120, height=17, 
                                                   font=('Consolas', 9), bg='#1e1e1e', fg='#d4d4d4')
         self.log_text.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
@@ -238,6 +265,43 @@ class InstagramAutomationController:
                 self.refresh_file_integrity()
         except Exception:
             pass
+
+    def update_current_task_ui(self, login, name, password, email):
+        """Update current task bar with all 4 credentials"""
+        def _update():
+            self.task_info.config(
+                text=f"👤 Login: {login}   |   📝 Name: {name}   |   🔒 Pass: {password}   |   ✉️ Email: {email}",
+                foreground='#4ec9b0'
+            )
+            for entry, val in [
+                (self.curr_login_entry, login),
+                (self.curr_name_entry, name),
+                (self.curr_pass_entry, password),
+                (self.curr_email_entry, email)
+            ]:
+                entry.config(state='normal')
+                entry.delete(0, tk.END)
+                entry.insert(0, val)
+                entry.config(state='readonly')
+        try:
+            self.root.after(0, _update)
+        except Exception:
+            pass
+
+    def copy_current_task_combo(self):
+        """Copy current task login:password:email:name combo to clipboard"""
+        login = self.curr_login_entry.get().strip()
+        name = self.curr_name_entry.get().strip()
+        pwd = self.curr_pass_entry.get().strip()
+        email = self.curr_email_entry.get().strip()
+        if not login or login == "-":
+            messagebox.showinfo("No Active Task", "There is currently no active task credentials to copy.")
+            return
+        combo = f"{login}:{pwd}:{email}:{name}"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(combo)
+        self.log(f"📋 Copied current task combo to clipboard: {combo}", 'info')
+        messagebox.showinfo("Copied to Clipboard", f"Task credentials copied successfully:\n\n{combo}\n\nFormat: username:password:email:name")
 
     def setup_version_tab(self, parent):
         """Construct the Version & Updates inspection tab"""
@@ -578,8 +642,19 @@ class InstagramAutomationController:
                 if dev_lines:
                     self.log(f"📱 Connected ADB Devices: {', '.join(dev_lines)}", 'info')
                     # Check if Instagram is installed on the emulator
-                    inst_check = subprocess.run(f'"{adb_cmd}" shell pm list packages com.instagram', shell=True, capture_output=True, text=True)
-                    if "com.instagram" in inst_check.stdout:
+                    self.ldplayer.ldplayer_path = self.ldplayer_path.get()
+                    self.ldplayer.instance_index = self.instance_index.get()
+                    is_installed = self.ldplayer.is_instagram_installed()
+                    if not is_installed:
+                        for line in dev_lines:
+                            parts = line.split()
+                            if len(parts) >= 2 and parts[1] == 'device':
+                                s = parts[0]
+                                check = subprocess.run(f'"{adb_cmd}" -s {s} shell pm list packages', shell=True, capture_output=True, text=True)
+                                if "com.instagram" in check.stdout:
+                                    is_installed = True
+                                    break
+                    if is_installed:
                         self.log("✅ Instagram App: Detected inside LDPlayer!", 'success')
                     else:
                         self.log("⚠️ Instagram App: NOT detected in LDPlayer. Please install Instagram inside LDPlayer!", 'warning')
@@ -684,14 +759,18 @@ class InstagramAutomationController:
                     pwd_raw = f"Insta_{seed}9"
                     task['password'] = pwd_raw
 
-                pwd_masked = (pwd_raw[:2] + "****" + pwd_raw[-1:]) if len(pwd_raw) > 3 else "***"
+                login_val = str(task.get('login', '')).strip()
+                name_val = str(task.get('first_name', '')).strip() or login_val
+                email_val = str(task.get('email', '')).strip()
                 
-                self.task_info.config(text=f"Task: {task.get('login', '')} | Email: {task.get('email', '')}")
-                self.log(f"📦 Successfully collected all task info from EasyEarn FIRST:", 'success')
-                self.log(f"   👤 Username : {task.get('login', '')}", 'info')
-                self.log(f"   🔒 Password : {pwd_masked} ({len(pwd_raw)} chars - direct keystroke engine)", 'info')
-                self.log(f"   ✉️ Email    : {task.get('email', '')}", 'info')
-                self.log(f"   📝 Full Name: {task.get('first_name', task.get('login', ''))}", 'info')
+                # Update UI Task Bar with all 4: Login, Name, Password, Email
+                self.update_current_task_ui(login_val, name_val, pwd_raw, email_val)
+                
+                self.log(f"📦 Successfully fetched task credentials from EasyEarn (Unmasked):", 'success')
+                self.log(f"   👤 Login / User : {login_val}", 'info')
+                self.log(f"   📝 Full Name    : {name_val}", 'info')
+                self.log(f"   🔒 Password     : {pwd_raw}", 'info')
+                self.log(f"   ✉️ Email        : {email_val}", 'info')
                 
                 # Step 3: Ensure LDPlayer is ready before proceeding
                 self.log("📱 Connecting to LDPlayer emulator...", 'info')
@@ -705,10 +784,10 @@ class InstagramAutomationController:
                 self.log("🚀 Feeding verified EasyEarn credentials into Instagram registration...", 'task')
                 
                 account_data = {
-                    'email': task.get('email', ''),
-                    'username': task.get('login', ''),
-                    'password': task.get('password', ''),
-                    'full_name': task.get('first_name', task.get('login', ''))
+                    'email': email_val,
+                    'username': login_val,
+                    'password': pwd_raw,
+                    'full_name': name_val
                 }
                 
                 # Step 4: Launch registration workflow on LDPlayer

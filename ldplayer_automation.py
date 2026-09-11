@@ -498,6 +498,23 @@ class LDPlayerAutomation:
         time.sleep(0.08)
         return True
 
+    def _get_displayed_year(self, xml_str: Optional[str] = None) -> Optional[int]:
+        """Extract any 4-digit year (1900-2035) found in the UI XML"""
+        import re
+        if not xml_str:
+            xml_str = self.dump_ui()
+        if not xml_str:
+            return None
+        years = re.findall(r'\b(19\d{2}|20\d{2})\b', xml_str)
+        if years:
+            try:
+                valid = [int(y) for y in years if 1900 <= int(y) <= 2035]
+                if valid:
+                    return valid[0]
+            except Exception:
+                pass
+        return None
+
     def find_birthday_picker_info(self, xml_str: Optional[str] = None) -> Tuple[int, int, int, int]:
         """
         Locates the scrollable birthday date picker wheels (Month, Day, Year).
@@ -510,29 +527,29 @@ class LDPlayerAutomation:
         if not xml_str:
             xml_str = self.dump_ui()
 
-        # 1. Search for 4-digit year element in XML (e.g. 2026, 2025, 2024, 2005)
+        # 1. Search for 4-digit year element in XML strictly located in lower half (picker zone)
         try:
             xml_start = xml_str.find("<?xml")
             clean_xml = xml_str[xml_start:] if xml_start != -1 else xml_str
             root = ET.fromstring(clean_xml)
 
-            # Check for year text or content-desc node
+            # Check for year text or content-desc in picker region (y >= 0.45 * h)
             for node in root.iter('node'):
                 text = (node.attrib.get('text', '') or '').strip()
                 desc = (node.attrib.get('content-desc', '') or '').strip()
-                if re.match(r'^(?:19\d{2}|20\d{2})$', text) or re.match(r'^(?:19\d{2}|20\d{2})$', desc):
+                if re.search(r'\b(19\d{2}|20\d{2})\b', text) or re.search(r'\b(19\d{2}|20\d{2})\b', desc):
                     bounds_str = node.attrib.get('bounds', '')
                     bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
                     if len(bounds_match) == 2:
                         x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
                         x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
-                        year_x = (x1 + x2) // 2
-                        year_y = (y1 + y2) // 2
-                        # Generous drag distance for spinning wheel
-                        drag_dist = max(180, int(h * 0.12))
-                        y_top = max(int(h * 0.55), year_y - drag_dist)
-                        y_bottom = min(int(h * 0.95), year_y + drag_dist)
-                        return (year_x, year_y, y_top, y_bottom)
+                        if y1 >= int(h * 0.45):
+                            year_x = (x1 + x2) // 2
+                            year_y = (y1 + y2) // 2
+                            drag_dist = max(180, int(h * 0.12))
+                            y_top = max(int(h * 0.58), year_y - drag_dist)
+                            y_bottom = min(int(h * 0.90), year_y + drag_dist)
+                            return (year_x, year_y, y_top, y_bottom)
 
             # Check for NumberPicker or DatePicker elements
             pickers = []
@@ -545,17 +562,17 @@ class LDPlayerAutomation:
                     if len(bounds_match) == 2:
                         x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
                         x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
-                        if (x2 - x1) > 20 and (y2 - y1) > 60:
+                        if 30 < (x2 - x1) < int(w * 0.60) and (y2 - y1) > 60 and y1 >= int(h * 0.45):
                             pickers.append((x1, y1, x2, y2))
 
             if pickers:
-                # Rightmost picker is Year in LTR layouts
+                # Rightmost picker is Year in LTR / Western / Latin layouts
                 pickers.sort(key=lambda p: p[0])
                 p = pickers[-1]
                 year_x = (p[0] + p[2]) // 2
                 year_y = (p[1] + p[3]) // 2
-                y_top = p[1] + int((p[3] - p[1]) * 0.15)
-                y_bottom = p[3] - int((p[3] - p[1]) * 0.15)
+                y_top = p[1] + int((p[3] - p[1]) * 0.20)
+                y_bottom = p[3] - int((p[3] - p[1]) * 0.20)
                 return (year_x, year_y, y_top, y_bottom)
         except Exception:
             pass
@@ -565,14 +582,20 @@ class LDPlayerAutomation:
         year_x = int(w * 0.78)
         year_y = int(h * 0.74)
         y_top = int(h * 0.63)
-        y_bottom = int(h * 0.85)
+        y_bottom = int(h * 0.83)
         return (year_x, year_y, y_top, y_bottom)
 
     def set_birthday(self, log_cb=None) -> bool:
         """
-        Rolls the scrollable Year wheel back by 20-30 years to ensure the account
-        is an adult age (e.g. Year ~1998-2003), confirms any dialog button, taps 'Next',
-        and verifies whether the screen advances away from the birthday page.
+        Rock-solid birthday automation for Instagram:
+        1. Ensures the DatePicker bottom-sheet/dialog is open (taps date field if needed).
+        2. Detects Year column & current displayed year.
+        3. Supports direct EditText entry if native NumberPicker is present.
+        4. Performs smooth bidirectional wheel scrolling (testing DOWN vs UP) to ensure adult age (1995-2002).
+        5. Confirms any DatePicker dialog ('Set' / 'OK' / 'Done' / android:id/button1).
+        6. Taps primary 'Next' / 'Continue' button with fallback coordinates & keyevent 66.
+        7. Handles Instagram age confirmation dialog ('Are you X years old?' / 'Confirm your age').
+        8. Dismisses under-age error dialogs if encountered and retries.
         """
         def log(msg, level="info"):
             if log_cb:
@@ -582,93 +605,193 @@ class LDPlayerAutomation:
                     pass
 
         w, h = self.get_screen_size()
-        log("🎂 Locating Birthday picker wheels...", "info")
-        
-        # If a soft keyboard is open, dismiss it so wheels are fully accessible
-        self._run_adb_args(["shell", "input", "keyevent", "4"])
-        time.sleep(0.15)
+        log("🎂 [Birthday] Inspecting Birthday screen...", "info")
         xml = self.dump_ui()
 
+        # Step 1: Ensure DatePicker is open.
+        # If no pickers/wheels or 4-digit years found in lower half, tap the date field in upper half
+        has_picker_in_lower_half = False
+        import re, xml.etree.ElementTree as ET
+        try:
+            xml_start = xml.find("<?xml")
+            clean_xml = xml[xml_start:] if xml_start != -1 else xml
+            root = ET.fromstring(clean_xml)
+            for node in root.iter('node'):
+                bounds_str = node.attrib.get('bounds', '')
+                bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                if len(bounds_match) == 2:
+                    y1 = int(bounds_match[0][1])
+                    if y1 >= int(h * 0.45):
+                        n_cls = (node.attrib.get('class', '') or '').lower()
+                        n_id = (node.attrib.get('resource-id', '') or '').lower()
+                        n_text = (node.attrib.get('text', '') or '')
+                        if 'picker' in n_cls or 'wheel' in n_cls or 'picker' in n_id or re.search(r'\b(19\d{2}|20\d{2})\b', n_text):
+                            has_picker_in_lower_half = True
+                            break
+        except Exception:
+            pass
+
+        if not has_picker_in_lower_half:
+            log("👉 Date picker not open yet. Tapping date display field to open wheel...", "info")
+            date_field_coords = self.find_text_coordinates([
+                "january", "february", "march", "april", "may", "june",
+                "july", "august", "september", "october", "november", "december",
+                "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+                "2026", "2025", "2024", "date of birth", "birthday"
+            ], xml_str=xml)
+            if date_field_coords and date_field_coords[1] < int(h * 0.50):
+                self._tap(date_field_coords[0], date_field_coords[1])
+            else:
+                self._tap(int(w * 0.50), int(h * 0.38))
+            time.sleep(0.6)
+            xml = self.dump_ui()
+
+        # Step 2: Try direct NumberPicker EditText entry if native widget exists
+        direct_entry_success = False
+        try:
+            xml_start = xml.find("<?xml")
+            clean_xml = xml[xml_start:] if xml_start != -1 else xml
+            root = ET.fromstring(clean_xml)
+            for node in root.iter('node'):
+                res_id = (node.attrib.get('resource-id', '') or '').lower()
+                text = (node.attrib.get('text', '') or '').strip()
+                if 'numberpicker_input' in res_id and re.match(r'^(?:19\d{2}|20\d{2})$', text):
+                    bounds_str = node.attrib.get('bounds', '')
+                    bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                    if len(bounds_match) == 2:
+                        cx = (int(bounds_match[0][0]) + int(bounds_match[1][0])) // 2
+                        cy = (int(bounds_match[0][1]) + int(bounds_match[1][1])) // 2
+                        if cy >= int(h * 0.45):
+                            log(f"✍️ Direct year input detected at ({cx}, {cy}). Setting Year 1999...", "info")
+                            self._tap(cx, cy)
+                            time.sleep(0.15)
+                            self._clear_text_field(6)
+                            self._run_adb_args(["shell", "input", "text", "1999"])
+                            time.sleep(0.2)
+                            direct_entry_success = True
+                            break
+        except Exception:
+            pass
+
+        # Step 3: Scrollable Wheel Automation (if direct entry not used or to ensure adult age)
         year_x, year_y, y_top, y_bottom = self.find_birthday_picker_info(xml)
-        month_x = int(w * 0.22)
+        month_x = int(w * 0.24)
         day_x = int(w * 0.50)
 
-        log(f"🔄 Rolling Year wheel backwards at x={year_x} (pulling past adult years)...", "info")
-        # Swiping down on Android NumberPicker / Wheel pulls earlier years into view
-        # 16 deliberate swipes scroll back 20-30 years (e.g. from 2026 to ~1998-2002)
-        for i in range(16):
-            self._run_adb_args(["shell", "input", "swipe", str(year_x), str(y_top), str(year_x), str(y_bottom), "180"])
-            time.sleep(0.04)
+        # Smooth drag helper (duration 360ms ensures natural Android touch physics)
+        def do_drag(x, y1, y2, duration_ms=360):
+            self._run_adb_args(["shell", "input", "swipe", str(x), str(y1), str(x), str(y2), str(duration_ms)])
+            time.sleep(0.10)
 
-        # Also swipe Month and Day a couple times so date is realistic and randomized
-        for _ in range(2):
-            self._run_adb_args(["shell", "input", "swipe", str(month_x), str(y_top), str(month_x), str(y_bottom), "150"])
-            time.sleep(0.03)
-            self._run_adb_args(["shell", "input", "swipe", str(day_x), str(y_top), str(day_x), str(y_bottom), "150"])
-            time.sleep(0.03)
+        if not direct_entry_success:
+            initial_year = self._get_displayed_year(xml)
+            log(f"🔄 Rolling Year wheel at x={year_x} (initial detected: {initial_year or '2026'})...", "info")
+
+            # Try Direction 1: Pull DOWN (from y_top to y_bottom)
+            for _ in range(6):
+                do_drag(year_x, y_top, y_bottom, duration_ms=360)
+
+            time.sleep(0.4)
+            mid_check_xml = self.dump_ui()
+            year_after_down = self._get_displayed_year(mid_check_xml)
+
+            # Check if DOWN swipe worked (year decreased or changed)
+            if initial_year and year_after_down and year_after_down >= initial_year:
+                # Wheel did not decrease -> reverse orientation! Drag UP (from y_bottom to y_top)
+                log("🔄 Wheel sorted descending (2026 at top). Scrolling UP to reach earlier adult years...", "info")
+                for _ in range(9):
+                    do_drag(year_x, y_bottom, y_top, duration_ms=360)
+            elif not initial_year or (year_after_down and year_after_down > 2003):
+                # Need additional drags to firmly land in 1995-2002 range
+                for _ in range(5):
+                    do_drag(year_x, y_top, y_bottom, duration_ms=360)
+
+            # Also swipe month and day 1-2 times so birthday is realistic and randomized
+            do_drag(month_x, y_top, y_bottom, duration_ms=300)
+            do_drag(day_x, y_top, y_bottom, duration_ms=300)
 
         # Allow wheel momentum to settle
-        time.sleep(0.8)
+        time.sleep(0.5)
 
-        # 1. Confirm dialog if there is a 'SET' / 'Set' / 'OK' / 'Done' button on popup
-        self.tap_text(["Set", "SET", "Ok", "OK", "Done", "Confirm"], timeout=0.6)
-        time.sleep(0.3)
+        # Step 4: Confirm DatePicker Dialog ("SET" / "Set" / "OK" / "Done")
+        log("👉 Confirming date selection in DatePicker...", "info")
+        # Try tapping Set/OK by text
+        dialog_confirmed = self.tap_text(["Set", "SET", "Ok", "OK", "Done", "DONE", "Confirm", "Save", "Установить", "Готово"], timeout=0.8)
+        # Try tapping Android standard dialog button1 (positive action)
+        if not dialog_confirmed:
+            btn1_coords = self.find_text_coordinates(["SET", "Set", "OK", "Ok"])
+            if btn1_coords:
+                self._tap(btn1_coords[0], btn1_coords[1])
+            else:
+                # Typical modal dialog Set/OK coordinates (bottom right or bottom center)
+                self._tap(int(w * 0.75), int(h * 0.88))
+                time.sleep(0.15)
+                self._tap(int(w * 0.50), int(h * 0.88))
+        time.sleep(0.4)
 
-        # 2. Tap the main 'Next' button
+        # Step 5: Tap the primary 'Next' button on Birthday screen
         log("👉 Tapping 'Next' on Birthday screen...", "info")
-        next_coords = self.find_text_coordinates(["Next", "Continue"])
+        next_coords = self.find_text_coordinates(["Next", "Continue", "Далее", "Siguiente", "Avançar"])
         if next_coords:
             log(f"🎯 Tapping 'Next' at {next_coords}...", "info")
             self._tap(next_coords[0], next_coords[1])
         else:
-            # Instagram typically has 'Next' right above the wheel (y ≈ 0.44)
-            log("👉 Tapping primary 'Next' button position (y=0.44)...", "info")
+            # Tap standard Instagram Next positions
             self._tap(int(w * 0.50), int(h * 0.44))
+            time.sleep(0.2)
+            self._tap(int(w * 0.50), int(h * 0.52))
+            time.sleep(0.2)
+            self._tap(int(w * 0.50), int(h * 0.90))
 
-        # Also send KEYCODE_ENTER as secondary trigger
+        # Enter key trigger
         self._run_adb_args(["shell", "input", "keyevent", "66"])
         time.sleep(1.2)
 
-        # 3. Verification: Check whether the screen advanced away from Birthday
-        verify_xml = self.dump_ui().lower()
-        birthday_keywords = ["birthday", "date of birth", "how old are you", "set date", "birth date", "add your birthday"]
-        if not any(k in verify_xml for k in birthday_keywords):
+        # Step 6: Handle Age Confirmation Dialog ("Are you X years old?" / "Confirm your age")
+        post_xml = self.dump_ui().lower()
+        if any(k in post_xml for k in ["years old", "confirm your age", "confirm your birthday", "is this your", "how old are you"]):
+            log("🎂 Age confirmation dialog detected ('Are you X years old?'). Tapping 'OK' / 'Confirm'...", "info")
+            self.tap_text(["OK", "Ok", "Confirm", "Yes", "Continue"], timeout=1.0, fallback_ratio=(0.75, 0.58))
+            time.sleep(1.0)
+            post_xml = self.dump_ui().lower()
+
+        # Step 7: Handle Under-13 or Invalid Birthday Error Popup
+        if any(k in post_xml for k in ["at least 13", "valid birthday", "can't continue", "sorry"]):
+            log("⚠️ Age error dialog detected ('Must be at least 13'). Dismissing and rolling further back...", "warning")
+            self.tap_text(["OK", "Ok", "Dismiss", "Cancel"], timeout=1.0)
+            time.sleep(0.3)
+            # Re-scroll year wheel heavily backwards
+            for _ in range(8):
+                do_drag(year_x, y_bottom, y_top, duration_ms=360)
+            time.sleep(0.4)
+            self.tap_text(["Set", "SET", "Ok", "OK"], timeout=0.6)
+            self.tap_text(["Next", "Continue"], timeout=0.8, fallback_ratio=(0.50, 0.52))
+            time.sleep(1.0)
+            post_xml = self.dump_ui().lower()
+
+        # Step 8: Verification - did the screen advance away from Birthday?
+        birthday_keywords = [
+            "birthday", "date of birth", "how old are you", "set date", 
+            "birth date", "add your birthday", "день рождения", "дата рождения", "cumpleaños"
+        ]
+        if not any(k in post_xml for k in birthday_keywords):
             log("✅ Successfully set adult birthday and advanced!", "success")
             return True
 
-        # Secondary attempt: Try alternative Next button positions
-        log("⚠️ Still on Birthday screen after first Next tap. Tapping Next again...", "warning")
+        # Retry tap Next once more
+        log("⚠️ Still on Birthday screen. Retrying Next tap...", "warning")
         self._tap(int(w * 0.50), int(h * 0.44))
-        time.sleep(0.3)
-        self._tap(int(w * 0.50), int(h * 0.50))
-        time.sleep(0.3)
-        self._tap(int(w * 0.50), int(h * 0.90))
+        time.sleep(0.2)
+        self._tap(int(w * 0.50), int(h * 0.52))
         self._run_adb_args(["shell", "input", "keyevent", "66"])
-        time.sleep(1.2)
+        time.sleep(1.0)
 
-        verify_xml = self.dump_ui().lower()
-        if not any(k in verify_xml for k in birthday_keywords):
+        final_xml = self.dump_ui().lower()
+        if not any(k in final_xml for k in birthday_keywords):
             log("✅ Successfully set adult birthday and advanced!", "success")
             return True
 
-        # If STILL on birthday, test upward swipe in case reverse wheel orientation
-        log("🔄 Swiping upward on Year wheel in case reverse orientation...", "info")
-        for i in range(16):
-            self._run_adb_args(["shell", "input", "swipe", str(year_x), str(y_bottom), str(year_x), str(y_top), "180"])
-            time.sleep(0.04)
-        time.sleep(0.8)
-        self.tap_text(["Set", "SET", "Ok", "OK", "Done", "Confirm"], timeout=0.6)
-        time.sleep(0.3)
-        self._tap(int(w * 0.50), int(h * 0.44))
-        self._run_adb_args(["shell", "input", "keyevent", "66"])
-        time.sleep(1.2)
-
-        verify_xml = self.dump_ui().lower()
-        if not any(k in verify_xml for k in birthday_keywords):
-            log("✅ Successfully set adult birthday and advanced!", "success")
-            return True
-
-        log("⚠️ Screen is still on Birthday page. Will retry on next loop pass...", "warning")
+        log("⚠️ Still on Birthday screen. Will retry on next loop pass...", "warning")
         return False
 
     def get_clipboard(self) -> str:
@@ -716,11 +839,27 @@ class LDPlayerAutomation:
         chars = string.ascii_uppercase + "234567"
         return ''.join(random.choice(chars) for _ in range(32))
 
+    def is_instagram_installed(self) -> bool:
+        """Check if Instagram (or Instagram Lite) is installed on the connected emulator instance"""
+        try:
+            pkgs = self._run_adb_args(["shell", "pm", "list", "packages"])
+            if "com.instagram" in pkgs:
+                return True
+            path_check = self._run_adb_args(["shell", "pm", "path", "com.instagram.android"])
+            if "package:" in path_check:
+                return True
+            path_lite = self._run_adb_args(["shell", "pm", "path", "com.instagram.lite"])
+            if "package:" in path_lite:
+                return True
+        except Exception:
+            pass
+        return False
+
     def launch_instagram(self) -> bool:
         """Launch Instagram using multiple fallback methods for maximum compatibility"""
         # Method 1: Check package name
-        installed = self._run_adb("shell pm list packages | grep instagram")
-        print(f"Installed instagram packages: {installed}")
+        installed = self._run_adb("shell pm list packages")
+        print(f"Installed instagram check: {'com.instagram' in installed}")
         
         # Method 2: LDPlayer console command runapp (direct to emulator engine)
         try:
@@ -1063,7 +1202,7 @@ class LDPlayerAutomation:
                         pwd = f"Insta_{seed}9"
                         account_data['password'] = pwd
 
-                    log(f"🔒 [Step 4/11] Entering Password ({len(account_data['password'])} chars)...", "info")
+                    log(f"🔒 [Step 4/11] Entering Password: '{account_data['password']}'", "info")
                     self.set_clipboard(account_data['password'])
                     self.enter_text_to_field(account_data['password'], hint_keywords=["password", "create a password"], fallback_ratio=(0.50, 0.35), is_password=True)
                     log("👉 [Step 4/11] Submitting password via 'Next' and enter key...", "info")
@@ -1100,13 +1239,14 @@ class LDPlayerAutomation:
                 on_birthday_screen = (
                     "birthday" in ui or "date of birth" in ui or "how old are you" in ui or 
                     "set date" in ui or "birth date" in ui or "add your birthday" in ui or
-                    ("month" in ui and "year" in ui) or ("day" in ui and "year" in ui)
+                    "день рождения" in ui or "дата рождения" in ui or "cumpleaños" in ui or
+                    "aniversário" in ui or ("month" in ui and "year" in ui) or ("day" in ui and "year" in ui)
                 )
                 if on_birthday_screen:
                     log("🎂 [Step 5/11] Birthday screen detected! Setting adult age (rolling wheel back 20-30 years)...", "info")
                     if self.set_birthday(log_cb=log):
                         birthday_set = True
-                    time.sleep(0.8)
+                    time.sleep(1.0)
                     continue
 
                 # Step 6: Username Step ("Create a username")
