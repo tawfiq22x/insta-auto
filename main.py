@@ -90,16 +90,16 @@ class InstagramAutomationController:
     def get_version_info(self) -> dict:
         """Load version and release details from version.json"""
         default_info = {
-            "version": "1.4.5",
-            "release_date": "2026-09-11 17:45",
-            "build_id": "v1.4.5-rel",
+            "version": "1.4.9",
+            "release_date": "2026-09-11 19:15",
+            "build_id": "v1.4.9-rel",
             "features": [
-                "Password Clipboard Sync: Copies password to Windows and Android clipboards to erase any prior clipboard content, then pastes directly into Instagram",
-                "Pre-fetching pipeline: extracts and verifies all credentials from EasyEarn FIRST before feeding to Instagram",
-                "Smart Birthday wheel automation: auto-scrolls Year backwards ~20-25 years and confirms DatePicker dialogs",
-                "Clean input field wiping: fixed backspace logic to prevent typing stray characters like 'a'",
-                "High-speed registration workflow: streamlined screen transitions and instant field clearing",
-                "Added Version & Updates tab with live update status and file integrity check"
+                "Unified Email & Password Keystroke Engine: Password entry strictly uses the identical direct ADB typing design as the email field (zero clipboard paste dependencies)",
+                "Clipboard Sanitization: Both Windows and Android clipboards are explicitly synchronized with the active password, preventing any stale clipboard text from ever being pasted",
+                "Accurate Password Field Targeting: Prioritizes genuine EditText nodes with password='true' and ignores static header TextViews",
+                "Single-Process Subshell Clear: Clearing fields runs via device-native subshell loop for instant clearing without lag",
+                "High-Speed Button Presses: Direct process argument invocation eliminates process spawn overhead on taps",
+                "Zero-Latency Pre-dumped XML Lookup: Reuses already-dumped UI XML hierarchy so buttons like 'Next' and 'Save' tap in milliseconds without re-dumping"
             ]
         }
         if os.path.exists("version.json"):

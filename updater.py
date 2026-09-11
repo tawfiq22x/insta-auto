@@ -91,7 +91,20 @@ def update_from_github(repo_url: str) -> bool:
             print(f"  ⚠️ Skipped / not found: {filename}")
             
     if updated_count > 0:
+        # Remove __pycache__ to ensure no stale bytecode remains
+        try:
+            shutil.rmtree(os.path.join(os.getcwd(), '__pycache__'), ignore_errors=True)
+        except Exception:
+            pass
+
         print(f"\n🎉 Successfully updated {updated_count} files from GitHub!")
+        if os.path.exists("version.json"):
+            try:
+                with open("version.json", "r", encoding="utf-8") as vf:
+                    vdata = json.load(vf)
+                    print(f"🚀 Installed Version: v{vdata.get('version', 'Unknown')}")
+            except Exception:
+                pass
         return True
     else:
         print("\n❌ Could not download files from that repository.")
@@ -123,8 +136,8 @@ def update_from_zip() -> bool:
         try:
             mtime = os.path.getmtime(zf)
             fname = os.path.basename(zf).lower()
-            # If created in last 4 hours or contains project keywords
-            if (now - mtime < 14400) or any(k in fname for k in ['c7cb', 'instagram', 'bot', 'react', 'export']):
+            # If created in last 8 hours or contains project keywords
+            if (now - mtime < 28800) or any(k in fname for k in ['c7cb', 'instagram', 'bot', 'react', 'export', 'project', 'studio', 'applet']):
                 candidates.append((mtime, zf))
         except Exception:
             pass
@@ -151,8 +164,21 @@ def update_from_zip() -> bool:
                     print(f"  ✅ Extracted: {base_name}")
                     updated_count += 1
                     
+        # Remove __pycache__ to ensure no stale bytecode remains
+        try:
+            shutil.rmtree(os.path.join(os.getcwd(), '__pycache__'), ignore_errors=True)
+        except Exception:
+            pass
+
         if updated_count > 0:
             print(f"\n🎉 Successfully updated {updated_count} files from ZIP!")
+            if os.path.exists("version.json"):
+                try:
+                    with open("version.json", "r", encoding="utf-8") as vf:
+                        vdata = json.load(vf)
+                        print(f"🚀 Installed Version: v{vdata.get('version', 'Unknown')}")
+                except Exception:
+                    pass
             return True
     except Exception as e:
         print(f"❌ Error extracting ZIP: {e}")

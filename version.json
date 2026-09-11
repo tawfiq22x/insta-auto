@@ -1,12 +1,13 @@
 {
-  "version": "1.4.8",
-  "release_date": "2026-09-11 18:45",
-  "build_id": "v1.4.8-rel",
+  "version": "1.4.9",
+  "release_date": "2026-09-11 19:15",
+  "build_id": "v1.4.9-rel",
   "features": [
-    "High-Speed Button Presses: Direct process argument invocation eliminates cmd.exe process spawn overhead on taps",
-    "Zero-Latency Pre-dumped XML Lookup: Reuses already-dumped UI XML hierarchy so buttons like 'Next' and 'Save' tap in milliseconds without re-dumping",
-    "Rapid Text Entry: Reduced field transition delays and backspace batch size for 2.5x faster typing response",
-    "Streamlined Navigation: Snappy screen transition delays across registration and 2FA setup flows",
-    "Unified Input Design: Email, username, name, and password all share the exact same rock-solid direct ADB input engine"
+    "Unified Email & Password Keystroke Engine: Password entry strictly uses the identical direct ADB typing design as the email field (zero clipboard paste dependencies)",
+    "Clipboard Sanitization: Both Windows and Android clipboards are explicitly synchronized with the active password, preventing any stale clipboard text from ever being pasted",
+    "Accurate Password Field Targeting: Prioritizes genuine EditText nodes with password='true' and ignores static header TextViews",
+    "Single-Process Subshell Clear: Clearing fields runs via device-native subshell loop for instant clearing without lag",
+    "High-Speed Button Presses: Direct process argument invocation eliminates process spawn overhead on taps",
+    "Zero-Latency Pre-dumped XML Lookup: Reuses already-dumped UI XML hierarchy so buttons like 'Next' and 'Save' tap in milliseconds without re-dumping"
   ]
 }

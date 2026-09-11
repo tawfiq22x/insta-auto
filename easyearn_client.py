@@ -346,7 +346,7 @@ class EasyEarnClient:
         # Guarantee a valid password if EasyEarn didn't provide an explicit one
         if not data.get('password'):
             seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-            generated_pwd = f"Acc_{seed}!9"
+            generated_pwd = f"Acc_{seed}9"
             data['password'] = generated_pwd
             self.log(f"ℹ️ Auto-generated secure password for Instagram: {data['password']}", "info")
 

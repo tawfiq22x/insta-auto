@@ -190,11 +190,14 @@ class LDPlayerAutomation:
     def _clear_text_field(self, count: int = 25):
         """Cleanly clear existing text or suggestions in focused field with fast direct keyevents"""
         try:
-            self._run_adb_args(["shell", "input", "keyevent", "123"]) # KEYCODE_MOVE_END
-            del_keys = ["67"] * min(count, 30)
-            self._run_adb_args(["shell", "input", "keyevent", *del_keys])
+            # Single subshell process: move to end then send backspaces
+            self._run_adb_args(["shell", "sh", "-c", "input keyevent 123; for i in $(seq 1 20); do input keyevent 67; done"])
         except Exception:
-            pass
+            try:
+                self._run_adb_args(["shell", "input", "keyevent", "123"])
+                self._run_adb_args(["shell", "input", "keyevent", "67"])
+            except Exception:
+                pass
 
     def _tap(self, x: int, y: int):
         """Tap a specific coordinate on screen instantly via direct process arguments"""
@@ -314,6 +317,17 @@ class LDPlayerAutomation:
         if isinstance(hint_keywords, str):
             hint_keywords = [hint_keywords]
 
+        # 1. Fast regex lookup for password="true" or password resource-id
+        if is_password:
+            match_pwd = re.search(r'password="true"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str)
+            if match_pwd:
+                x1, y1, x2, y2 = map(int, match_pwd.groups())
+                return ((x1 + x2) // 2, (y1 + y2) // 2)
+            match_pwd_id = re.search(r'class="[^"]*EditText[^"]*"[^>]*resource-id="[^"]*password[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str, re.IGNORECASE)
+            if match_pwd_id:
+                x1, y1, x2, y2 = map(int, match_pwd_id.groups())
+                return ((x1 + x2) // 2, (y1 + y2) // 2)
+
         try:
             xml_start = xml_str.find("<?xml")
             clean_xml = xml_str[xml_start:] if xml_start != -1 else xml_str
@@ -329,8 +343,8 @@ class LDPlayerAutomation:
                 if node_pwd or 'password' in res_id:
                     password_nodes.append(node)
 
-                # Identify any input field
-                if 'EditText' in node_class or node_pwd or (node.attrib.get('focusable') == 'true' and 'clickable' in node.attrib and 'Text' in node_class):
+                # ONLY genuine input fields (never match static header TextViews!)
+                if 'EditText' in node_class or node_pwd:
                     edit_texts.append(node)
 
             # Prioritize password node if is_password
@@ -342,7 +356,7 @@ class LDPlayerAutomation:
                     x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
                     return ((x1 + x2) // 2, (y1 + y2) // 2)
 
-            # Match against hint, text, resource-id, or content-desc
+            # Match against hint, text, resource-id, or content-desc of genuine edit_texts only
             if hint_keywords:
                 for node in edit_texts:
                     node_text = (node.attrib.get('text', '') or '').strip().lower()
@@ -439,14 +453,25 @@ class LDPlayerAutomation:
         return self.enter_text_to_field(
             password, 
             hint_keywords=["password", "create a password", "choose a password"], 
-            fallback_ratio=fallback_ratio
+            fallback_ratio=fallback_ratio,
+            is_password=True
         )
 
     def enter_text_to_field(self, text: str, hint_keywords=None, fallback_ratio=(0.50, 0.35), is_password: bool = False, xml_str: Optional[str] = None) -> bool:
-        """Find the real EditText field, tap it to focus, clear it, and type text safely via fast ADB (identical for email, username, name, password)"""
+        """Find the real EditText field, tap it to focus, clear it, and type text safely via fast ADB keystrokes.
+        Identical rock-solid design across email, username, name, and password fields.
+        """
         if not text:
             print("⚠️ Warning: Empty text passed to enter_text_to_field!")
             return False
+
+        # If entering password, wipe out any prior clipboard items on Windows and Android with the exact password
+        # This guarantees that if Android or LDPlayer triggers any paste or autofill popup, it will paste the exact password!
+        if is_password or (hint_keywords and any("pass" in str(k).lower() for k in hint_keywords)):
+            try:
+                self.set_clipboard(text)
+            except Exception:
+                pass
 
         coords = self.find_edit_text_coordinates(hint_keywords, xml_str=xml_str, is_password=is_password)
         if coords:
@@ -463,7 +488,7 @@ class LDPlayerAutomation:
         self._clear_text_field(25)
         time.sleep(0.06)
         
-        # Type text purely via ADB input text
+        # Type text purely via ADB keystrokes (identical design to the email field)
         print(f"⌨️ Typing input text: {text}")
         self._type_text(text)
         time.sleep(0.12)
@@ -874,8 +899,9 @@ class LDPlayerAutomation:
                         pwd = f"Insta_{seed}9"
                         account_data['password'] = pwd
 
-                    log(f"🔒 Entering Password: {account_data['password']}...", "info")
-                    self.enter_text_to_field(account_data['password'], hint_keywords=["password", "create a password"], fallback_ratio=(0.50, 0.35), xml_str=ui)
+                    log(f"🔒 Entering Password ({len(account_data['password'])} chars - exact email keystroke design)...", "info")
+                    self.set_clipboard(account_data['password'])
+                    self.enter_text_to_field(account_data['password'], hint_keywords=["password", "create a password"], fallback_ratio=(0.50, 0.35), is_password=True, xml_str=ui)
                     self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                     password_entered = True
                     time.sleep(0.35)
