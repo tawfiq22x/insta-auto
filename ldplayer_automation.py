@@ -527,15 +527,17 @@ class LDPlayerAutomation:
                         x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
                         year_x = (x1 + x2) // 2
                         year_y = (y1 + y2) // 2
-                        y_top = max(0, year_y - int(h * 0.10))
-                        y_bottom = min(h, year_y + int(h * 0.10))
+                        # Ensure generous drag distance for spinning wheel
+                        drag_dist = max(180, int(h * 0.12))
+                        y_top = max(0, year_y - drag_dist)
+                        y_bottom = min(h, year_y + drag_dist)
                         return (year_x, year_y, y_top, y_bottom)
 
-            # Check for NumberPicker elements
+            # Check for NumberPicker or DatePicker elements
             pickers = []
             for node in root.iter('node'):
                 node_class = node.attrib.get('class', '')
-                if 'NumberPicker' in node_class or 'DatePicker' in node_class:
+                if 'NumberPicker' in node_class or 'DatePicker' in node_class or 'Wheel' in node_class:
                     bounds_str = node.attrib.get('bounds', '')
                     bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
                     if len(bounds_match) == 2:
@@ -544,7 +546,7 @@ class LDPlayerAutomation:
                         pickers.append((x1, y1, x2, y2))
 
             if pickers:
-                # Sort by horizontal position (rightmost picker is Year in LTR)
+                # Rightmost picker is Year in LTR layouts
                 pickers.sort(key=lambda p: p[0])
                 p = pickers[-1]
                 year_x = (p[0] + p[2]) // 2
@@ -555,17 +557,19 @@ class LDPlayerAutomation:
         except Exception:
             pass
 
-        # 2. Geometric fallback for portrait mobile screen
-        year_x = int(w * 0.78)
-        year_y = int(h * 0.72)
-        y_top = int(h * 0.62)
-        y_bottom = int(h * 0.82)
+        # 2. Geometric fallback for mobile portrait screen (wheels occupy lower portion)
+        # Year wheel is on the right (~80% width), middle vertical zone (~72% height)
+        year_x = int(w * 0.80)
+        year_y = int(h * 0.73)
+        y_top = int(h * 0.64)
+        y_bottom = int(h * 0.84)
         return (year_x, year_y, y_top, y_bottom)
 
     def set_birthday(self, log_cb=None) -> bool:
         """
         Rolls the scrollable Year wheel back by 20-25 years to ensure the account
-        is an adult age (e.g. Year ~2000), confirms dialog 'SET' button, and taps 'Next'.
+        is an adult age (e.g. Year ~2000), confirms dialog 'SET' button, taps 'Next',
+        and verifies whether the screen actually advances away from the birthday page.
         """
         def log(msg, level="info"):
             if log_cb:
@@ -575,33 +579,103 @@ class LDPlayerAutomation:
                     pass
 
         w, h = self.get_screen_size()
-        log("🎂 Locating scrollable Birthday picker...", "info")
+        log("🎂 Locating Birthday picker...", "info")
         xml = self.dump_ui()
+
+        # Check if there is an editable text field for birthday to gain focus
+        coords = self.find_edit_text_coordinates(["birthday", "date", "birth"], xml_str=xml)
+        if coords:
+            log(f"📝 Tapping Birthday field at {coords} to activate picker...", "info")
+            self._tap(coords[0], coords[1])
+            time.sleep(0.2)
+            xml = self.dump_ui()
+
         year_x, year_y, y_top, y_bottom = self.find_birthday_picker_info(xml)
 
-        log(f"🔄 Scrolling Year wheel backwards at x={year_x}...", "info")
-        # Swiping down from top to bottom on Android NumberPicker pulls past years down
-        for i in range(6):
-            self._run_adb_args(["shell", "input", "swipe", str(year_x), str(y_top), str(year_x), str(y_bottom), "100"])
+        import re
+        def get_screen_years(text_dump):
+            return [int(y) for y in re.findall(r'\b(19\d{2}|20\d{2})\b', text_dump)]
+
+        initial_years = get_screen_years(xml)
+        log(f"📅 Screen detected years: {initial_years}", "info")
+
+        log(f"🔄 Rolling Year wheel backwards at x={year_x} (pulling past adult years)...", "info")
+        # Swiping down on Android NumberPicker / Wheel pulls earlier years down into the center
+        # 14 deliberate 200ms swipes will scroll back 20-30 years (e.g. from 2026 to ~1998-2002)
+        for i in range(14):
+            self._run_adb_args(["shell", "input", "swipe", str(year_x), str(y_top), str(year_x), str(y_bottom), "200"])
             time.sleep(0.04)
 
-        # Give Month (left) and Day (middle) 1 natural swipe
-        month_x = int(w * 0.22)
+        # Also swipe Month (left) and Day (middle) so date is fully randomized
+        month_x = int(w * 0.20)
         day_x = int(w * 0.50)
-        self._run_adb_args(["shell", "input", "swipe", str(month_x), str(y_top), str(month_x), str(y_bottom), "120"])
-        time.sleep(0.03)
-        self._run_adb_args(["shell", "input", "swipe", str(day_x), str(y_top), str(day_x), str(y_bottom), "120"])
+        for _ in range(2):
+            self._run_adb_args(["shell", "input", "swipe", str(month_x), str(y_top), str(month_x), str(y_bottom), "180"])
+            time.sleep(0.03)
+            self._run_adb_args(["shell", "input", "swipe", str(day_x), str(y_top), str(day_x), str(y_bottom), "180"])
+            time.sleep(0.03)
+
+        time.sleep(0.25)
+        mid_xml = self.dump_ui()
+        updated_years = get_screen_years(mid_xml)
+        log(f"📅 Post-scroll detected years: {updated_years}", "info")
+
+        # If year didn't decrease (some wheel pickers decrease when swiping up), swipe up!
+        if not any(y < 2008 for y in updated_years):
+            log("🔄 Swiping upward on Year wheel in case reverse orientation...", "info")
+            for i in range(14):
+                self._run_adb_args(["shell", "input", "swipe", str(year_x), str(y_bottom), str(year_x), str(y_top), "200"])
+                time.sleep(0.04)
+            time.sleep(0.2)
+            mid_xml = self.dump_ui()
+            updated_years = get_screen_years(mid_xml)
+
+        # In case the device layout has Year on the left column (e.g. YYYY-MM-DD)
+        if not any(y < 2008 for y in updated_years):
+            log("🔄 Rolling left column in case Year is on the left...", "info")
+            for i in range(12):
+                self._run_adb_args(["shell", "input", "swipe", str(month_x), str(y_top), str(month_x), str(y_bottom), "200"])
+                time.sleep(0.04)
+            time.sleep(0.2)
+            mid_xml = self.dump_ui()
+
+        # 1. Confirm dialog if there is a 'SET' / 'Set' / 'OK' / 'Done' button on popup
+        self.tap_text(["Set", "SET", "Ok", "OK", "Done", "Confirm", "Save"], timeout=0.6, xml_str=mid_xml)
         time.sleep(0.2)
 
-        # Confirm dialog if there is a 'SET' / 'Set' / 'OK' button on popup
-        log("👉 Confirming date of birth selection...", "info")
-        self.tap_text(["Set", "SET", "Ok", "OK", "Done", "Confirm"], timeout=0.8, xml_str=xml)
-        time.sleep(0.2)
-
-        # Tap the main 'Next' button
+        # 2. Tap the main 'Next' button
         log("👉 Tapping 'Next' on Birthday screen...", "info")
-        self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.42))
-        return True
+        next_coords = self.find_text_coordinates(["Next", "Continue"])
+        if next_coords:
+            log(f"🎯 Tapping 'Next' at {next_coords}...", "info")
+            self._tap(next_coords[0], next_coords[1])
+        else:
+            # Fallback ratios for Birthday Next button:
+            # Instagram typically has 'Next' right above the wheel (y ≈ 0.42)
+            log("👉 Tapping primary 'Next' button position (y=0.42)...", "info")
+            self._tap(int(w * 0.50), int(h * 0.42))
+
+        time.sleep(0.6)
+
+        # 3. Verification: Check whether the screen advanced away from Birthday
+        verify_xml = self.dump_ui().lower()
+        if "birthday" in verify_xml or "date of birth" in verify_xml or "how old are you" in verify_xml:
+            log("⚠️ Still on Birthday screen after first Next tap. Tapping Next again...", "warning")
+            if next_coords:
+                self._tap(next_coords[0], next_coords[1])
+            else:
+                self._tap(int(w * 0.50), int(h * 0.42))
+                time.sleep(0.2)
+                self._tap(int(w * 0.50), int(h * 0.90))
+            time.sleep(0.6)
+            verify_xml = self.dump_ui().lower()
+
+        if "birthday" not in verify_xml and "date of birth" not in verify_xml:
+            log("✅ Successfully passed Birthday screen!", "success")
+            return True
+        else:
+            log("⚠️ Screen is still on Birthday page. Will retry on next loop pass...", "warning")
+            return False
 
     def get_clipboard(self) -> str:
         """Read Android clipboard string via ADB"""
@@ -868,30 +942,75 @@ class LDPlayerAutomation:
             )
             time.sleep(0.6)
 
-            # 3. Step-by-Step Registration Loop
-            # Modern Instagram asks: Name -> Password -> Save info -> Birthday -> Username -> Mobile/Email -> Code
-            name_entered = False
+            # 3. Step-by-Step Registration Loop (11-Step Instagram Registration Flow)
+            # 1. Create new account
+            # 2. Enter Email (switch to email if needed) -> Next
+            # 3. Enter Confirmation Code (6-digit OTP) -> Next
+            # 4. Create Password -> Next -> Save login info (Save / Not now)
+            # 5. Add Date of Birth (Wheel scroll adult age) -> Next
+            # 6. Create Username -> Next
+            # 7. Agree to Terms and Policies ("I agree")
+            # 8. Add Profile Picture -> Skip
+            # 9. Find Friends from Contacts -> Skip
+            # 10. Connect to Facebook -> Skip
+            # 11. Discover Suggested Accounts -> Top Right Arrow/Next -> Home Feed
+            email_entered = False
+            code_entered = False
             password_entered = False
             birthday_set = False
             username_entered = False
-            email_entered = False
-            code_entered = False
+            name_entered = False
             terms_agreed = False
+            skippable_pass_count = 0
 
-            for step_round in range(1, 20):
+            registration_completed = False
+
+            for step_round in range(1, 45):
                 ui = self.dump_ui().lower()
 
-                # A. Name Step ("What's your name?" / "Full name")
-                if not name_entered and ("what's your name" in ui or "full name" in ui or ("name" in ui and not password_entered and not birthday_set and not email_entered)):
-                    log(f"📝 Entering Name: {account_data['full_name']}...", "info")
-                    self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35), xml_str=ui)
-                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
-                    name_entered = True
+                # Step 2: Contact Method - Phone / Email screen ("What's your mobile number?" or "Sign up with email")
+                if not email_entered and ("mobile" in ui or "phone" in ui or "what's your mobile" in ui):
+                    log("📧 [Step 2/11] Selecting 'Sign up with email' instead of phone...", "info")
+                    self.tap_text(["Sign up with email", "Sign up with email address", "Email", "Use email"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
                     time.sleep(0.35)
+                    ui = self.dump_ui().lower()
+
+                if not email_entered and not code_entered and ("what's your email" in ui or "email" in ui):
+                    log(f"✉️ [Step 2/11] Entering Email: {account_data['email']}...", "info")
+                    self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email"], fallback_ratio=(0.50, 0.35), xml_str=ui)
+                    log("👉 [Step 2/11] Tapping 'Next' to dispatch confirmation code...", "info")
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
+                    email_entered = True
+                    time.sleep(0.8)
                     continue
 
-                # B. Password Step ("Create a password")
-                if not password_entered and ("password" in ui or "create a password" in ui or "choose a password" in ui or "set a password" in ui):
+                # Step 3: Confirmation Code ("Enter confirmation code" / "Confirmation code" / "6-digit")
+                if not code_entered and ("confirmation code" in ui or "enter the 6-digit" in ui or "check your email" in ui or "security code" in ui or "enter confirmation" in ui):
+                    log("📬 [Step 3/11] Instagram sent verification email! Waiting for OTP code from EasyEarn...", "task")
+                    
+                    received_code = otp_code
+                    if not received_code and otp_fetcher:
+                        # Poll EasyEarn for the code for up to 90 seconds
+                        for poll_attempt in range(18):
+                            log(f"⏳ [Step 3/11] Waiting for OTP code from EasyEarn (attempt {poll_attempt+1}/18)...", "info")
+                            received_code = otp_fetcher()
+                            if received_code:
+                                break
+                            time.sleep(3)
+
+                    if received_code:
+                        log(f"🔑 [Step 3/11] OTP Code received: {received_code}! Entering into Instagram...", "success")
+                        self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35), xml_str=ui)
+                        self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
+                        code_entered = True
+                        time.sleep(1.0)
+                        continue
+                    else:
+                        log("⚠️ [Step 3/11] Did not receive OTP code in time. Will retry on next cycle.", "warning")
+                        break
+
+                # Step 4: Password Step ("Create a password")
+                if not password_entered and ("create a password" in ui or "choose a password" in ui or "set a password" in ui or "password" in ui):
                     pwd = account_data.get('password', '').strip()
                     if not pwd or len(pwd) < 6:
                         import random, string
@@ -899,101 +1018,128 @@ class LDPlayerAutomation:
                         pwd = f"Insta_{seed}9"
                         account_data['password'] = pwd
 
-                    log(f"🔒 Entering Password ({len(account_data['password'])} chars - exact email keystroke design)...", "info")
+                    log(f"🔒 [Step 4/11] Entering Password ({len(account_data['password'])} chars)...", "info")
                     self.set_clipboard(account_data['password'])
                     self.enter_text_to_field(account_data['password'], hint_keywords=["password", "create a password"], fallback_ratio=(0.50, 0.35), is_password=True, xml_str=ui)
                     self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                     password_entered = True
-                    time.sleep(0.35)
+                    time.sleep(0.4)
                     continue
 
-                # C. Save login info prompt ("Save your login info?")
-                if "save your login info" in ui or ("save" in ui and "not now" in ui):
-                    log("💾 Tapping 'Save' on login info...", "info")
+                # Step 4b: Save login info prompt ("Save your login info?")
+                if "save your login info" in ui or ("save" in ui and "not now" in ui and not email_entered):
+                    log("💾 [Step 4/11] Tapping 'Save' on login info...", "info")
                     self.tap_text(["Save", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                     time.sleep(0.35)
                     continue
 
-                # D. Birthday Step ("What's your birthday?")
-                if not birthday_set and ("birthday" in ui or "date of birth" in ui or "how old are you" in ui or "set date" in ui):
-                    log("🎂 Setting Birthday via scrollable wheel picker...", "info")
-                    self.set_birthday(log_cb=log)
-                    birthday_set = True
-                    time.sleep(0.4)
+                # Step 5: Birthday Step ("What's your birthday?" / "Date of birth")
+                if "birthday" in ui or "date of birth" in ui or "how old are you" in ui or "set date" in ui:
+                    log("🎂 [Step 5/11] Setting Birthday to adult age via scrollable wheel picker...", "info")
+                    if self.set_birthday(log_cb=log):
+                        birthday_set = True
+                    time.sleep(0.5)
                     continue
 
-                # E. Username Step ("Create a username")
-                if not username_entered and ("create a username" in ui or "choose a username" in ui or ("username" in ui and not email_entered)):
-                    log(f"👤 Setting Username: {account_data['username']}...", "info")
+                # Step 6: Username Step ("Create a username")
+                if not username_entered and ("create a username" in ui or "choose a username" in ui or ("username" in ui and not email_entered and not code_entered)):
+                    log(f"👤 [Step 6/11] Setting Username: {account_data['username']}...", "info")
                     self.enter_text_to_field(account_data['username'], hint_keywords=["username"], fallback_ratio=(0.50, 0.35), xml_str=ui)
                     self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                     username_entered = True
-                    time.sleep(0.4)
+                    time.sleep(0.5)
                     continue
 
-                # F. Mobile Number Prompt -> Switch to Email ("Sign up with email")
-                if not email_entered and ("mobile" in ui or "phone" in ui or "what's your mobile" in ui):
-                    log("📧 Selecting 'Sign up with email' instead of phone...", "info")
-                    self.tap_text(["Sign up with email", "email", "Use email"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
-                    time.sleep(0.35)
-                    ui = self.dump_ui().lower()
-
-                # G. Email Entry ("What's your email?" / "Email")
-                if not email_entered and not code_entered and ("what's your email" in ui or "email" in ui):
-                    log(f"✉️ Entering Email: {account_data['email']}...", "info")
-                    self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email"], fallback_ratio=(0.50, 0.35), xml_str=ui)
-                    log("👉 Tapping 'Next' to send verification code...", "info")
+                # Optional Name step if presented ("What's your name?" / "Full name")
+                if not name_entered and ("what's your name" in ui or "full name" in ui):
+                    log(f"📝 Entering Name: {account_data['full_name']}...", "info")
+                    self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35), xml_str=ui)
                     self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
-                    email_entered = True
-                    time.sleep(0.8)
+                    name_entered = True
+                    time.sleep(0.35)
                     continue
 
-                # H. Confirmation Code Step ("Enter confirmation code" / "Confirmation code")
-                if not code_entered and ("confirmation code" in ui or "enter the 6-digit" in ui or "check your email" in ui):
-                    log("📬 Instagram sent verification email! Waiting for OTP code from EasyEarn...", "task")
-                    
-                    received_code = otp_code
-                    if not received_code and otp_fetcher:
-                        # Poll EasyEarn for the code for up to 90 seconds
-                        for poll_attempt in range(18):
-                            log(f"⏳ Waiting for OTP code from EasyEarn (attempt {poll_attempt+1}/18)...", "info")
-                            received_code = otp_fetcher()
-                            if received_code:
-                                break
-                            time.sleep(3)
-
-                    if received_code:
-                        log(f"🔑 OTP Code received: {received_code}! Entering into Instagram...", "success")
-                        self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35), xml_str=ui)
-                        self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
-                        code_entered = True
-                        time.sleep(1.0)
-                        continue
-                    else:
-                        log("⚠️ Did not receive OTP code in time. Will retry on next cycle.", "warning")
-                        break
-
-                # I. Terms and Policies ("I agree")
+                # Step 7: Agree to Terms and Policies ("I agree" / "Sign up")
                 if not terms_agreed and ("i agree" in ui or "agree to instagram" in ui or "terms" in ui):
-                    log("📜 Tapping 'I agree' to Terms...", "info")
-                    self.tap_text(["I agree", "Agree"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    log("📜 [Step 7/11] Tapping 'I agree' to Terms & Policies...", "info")
+                    self.tap_text(["I agree", "Agree", "Sign up"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
                     terms_agreed = True
-                    time.sleep(1.5)
+                    time.sleep(2.5)
                     continue
 
-                # J. Add a profile picture / Skip screens
-                if "add picture" in ui or "profile picture" in ui or "skip" in ui:
-                    log("⏭️ Skipping profile photo / contacts...", "info")
+                # Step 8: Add Profile Picture (Skippable)
+                if terms_agreed and ("add picture" in ui or "profile picture" in ui or "add a profile photo" in ui):
+                    log("⏭️ [Step 8/11] Add Profile Picture: Tapping 'Skip'...", "info")
                     self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
-                    time.sleep(0.4)
+                    skippable_pass_count += 1
+                    time.sleep(0.5)
                     continue
 
-                # If reached feed or search or home, registration is finished!
-                if "feed" in ui or "direct" in ui or "reels" in ui or (email_entered and code_entered and terms_agreed):
-                    log("🎉 Account creation completed successfully on Instagram!", "success")
+                # Step 9: Find Friends from Contacts (Skippable)
+                if terms_agreed and ("find friends" in ui or "contacts" in ui or "sync contacts" in ui):
+                    log("⏭️ [Step 9/11] Contacts Sync: Tapping 'Skip'...", "info")
+                    self.tap_text(["Skip", "Not now", "Cancel", "Deny"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    skippable_pass_count += 1
+                    time.sleep(0.5)
+                    continue
+
+                # Step 10: Connect to Facebook (Skippable)
+                if terms_agreed and ("facebook" in ui or "connect to facebook" in ui):
+                    log("⏭️ [Step 10/11] Connect to Facebook: Tapping 'Skip'...", "info")
+                    self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    skippable_pass_count += 1
+                    time.sleep(0.5)
+                    continue
+
+                # Step 11: Discover Suggested Accounts (Final Screen - Bypass via Top Right Arrow/Next)
+                if terms_agreed and ("discover people" in ui or "suggested accounts" in ui or "suggestions" in ui or ("follow" in ui and "discover" in ui)):
+                    log("👥 [Step 11/11] Discover Suggested Accounts: Bypassing via top-right arrow/next...", "info")
+                    tapped = self.tap_text(["Next", "Done", "Skip"], timeout=0.8, xml_str=ui)
+                    if not tapped:
+                        # Tap top-right arrow button at ~92% width, ~6% height
+                        self._tap(int(w * 0.92), int(h * 0.06))
+                    skippable_pass_count += 1
+                    time.sleep(1.0)
+                    continue
+
+                # Generic Onboarding Skip after terms agreed
+                if terms_agreed and ("skip" in ui or "not now" in ui):
+                    log("⏭️ Bypassing onboarding prompt ('Skip' / 'Not now')...", "info")
+                    self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    skippable_pass_count += 1
+                    time.sleep(0.5)
+                    continue
+
+                # Final Home Feed Verification
+                # Screen loads primary bottom navigation bar (Home feed, Search, Reels, Profile)
+                if terms_agreed and ("feed" in ui or "search" in ui or "reels" in ui or "direct" in ui or "posts" in ui or skippable_pass_count >= 2):
+                    log("🎉 [Complete] Home feed reached! Instagram registration fully verified!", "success")
+                    registration_completed = True
                     break
 
                 time.sleep(0.35)
+
+            if not registration_completed:
+                stalled_screen = "Unknown screen"
+                if "birthday" in ui or "date of birth" in ui:
+                    stalled_screen = "Birthday screen"
+                elif "password" in ui or "create a password" in ui:
+                    stalled_screen = "Password screen"
+                elif "username" in ui:
+                    stalled_screen = "Username screen"
+                elif "email" in ui:
+                    stalled_screen = "Email screen"
+                elif "confirmation code" in ui or "code" in ui:
+                    stalled_screen = "OTP Code screen"
+                elif "agree" in ui or "terms" in ui:
+                    stalled_screen = "Terms & Conditions screen"
+                
+                log(f"❌ Registration did not finish. Stopped at: {stalled_screen}", "error")
+                return {
+                    'success': False,
+                    'error': f'Registration stopped at {stalled_screen}',
+                    'username': account_data.get('username', '')
+                }
 
             # Step 4: Real Two-Factor Authentication (2FA) Setup
             twofa_key = ""

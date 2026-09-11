@@ -1,13 +1,12 @@
 {
-  "version": "1.4.9",
-  "release_date": "2026-09-11 19:15",
-  "build_id": "v1.4.9-rel",
+  "version": "1.5.1",
+  "release_date": "2026-09-11 19:55",
+  "build_id": "v1.5.1-rel",
   "features": [
-    "Unified Email & Password Keystroke Engine: Password entry strictly uses the identical direct ADB typing design as the email field (zero clipboard paste dependencies)",
-    "Clipboard Sanitization: Both Windows and Android clipboards are explicitly synchronized with the active password, preventing any stale clipboard text from ever being pasted",
-    "Accurate Password Field Targeting: Prioritizes genuine EditText nodes with password='true' and ignores static header TextViews",
-    "Single-Process Subshell Clear: Clearing fields runs via device-native subshell loop for instant clearing without lag",
-    "High-Speed Button Presses: Direct process argument invocation eliminates process spawn overhead on taps",
-    "Zero-Latency Pre-dumped XML Lookup: Reuses already-dumped UI XML hierarchy so buttons like 'Next' and 'Save' tap in milliseconds without re-dumping"
+    "Full 11-Step Instagram Registration Flow: Perfectly aligned with exact Instagram onboarding sequence (Launch -> Email -> OTP Code -> Password -> Adult Birthday -> Username -> Terms -> Profile Pic Skip -> Contacts Skip -> Facebook Skip -> Suggested Accounts Bypass -> Home Feed)",
+    "Bidirectional Wheel Scroll Engine: Rolls Year back 20-30 years with dual-direction fallback and UI advance verification to ensure 13+ age compliance",
+    "Post-Terms Onboarding Handler: Reliably bypasses profile photo, contacts, Facebook, and taps the top-right arrow on Discover Suggested Accounts to land cleanly on the Home Feed",
+    "Zero False-Completion Guard: Account creation strictly requires Terms agreement and Home Feed landing before marking complete",
+    "Real-time Step-by-Step Logging: Emits clear [Step X/11] terminal status indicators throughout the entire registration flow"
   ]
 }
