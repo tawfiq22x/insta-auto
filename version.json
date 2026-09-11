@@ -1,12 +1,12 @@
 {
-  "version": "1.5.2",
-  "release_date": "2026-09-11 20:15",
-  "build_id": "v1.5.2-rel",
+  "version": "1.5.3",
+  "release_date": "2026-09-11 20:35",
+  "build_id": "v1.5.3-rel",
   "features": [
-    "Resilient Email & Phone Tab Transition: Accurately detects Phone screen vs Email screen, taps 'Sign up with email' / Email tab, and waits for screen transition before entering email",
-    "Welcome Screen & Google Smart Lock Recovery: Added automatic welcome screen detection inside the registration loop and Google Smart Lock dialog dismissal",
-    "Transition-Verified Email Submission: Verifies the screen moves to OTP Confirmation or Password before locking email_entered state",
-    "Full 11-Step Instagram Registration Flow: Launch -> Switch to Email -> OTP Code -> Password -> Adult Birthday -> Username -> Terms -> Onboarding Skips -> Home Feed",
-    "Granular Stalled Screen Diagnostics: Accurately pinpoints whether the bot stopped on Welcome, Mobile, Email, OTP, Birthday, or Terms screen"
+    "Unidirectional Adult Year Wheel Scroll: Removed self-cancelling reverse wheel swipe bug and ensured smooth 20-30 year rollback to guarantee adult age (1998-2003)",
+    "Keyboard-Clear Birthday Wheel Access: Automatically dismisses soft keyboard before wheel scrolling so DatePicker columns are never obstructed",
+    "IME & Position-Verified Password Submission: Uses dual-trigger (Enter key + Next button at y=0.52) and verifies screen transition before advancing",
+    "Save Login Info Screen Handler: Accurately detects and confirms 'Save your login info?' before transitioning to Birthday",
+    "Adaptive Birthday Next Button Trigger: Multi-target Next button tap and advance verification to smoothly move directly into the Username step"
   ]
 }
