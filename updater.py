@@ -43,12 +43,28 @@ def update_from_github(repo_url: str) -> bool:
     branches = ['main', 'master']
     updated_count = 0
     
+    # Check possible token file names (.github_token, github_token.txt, token.txt)
+    token = None
+    for token_name in [".github_token", "github_token.txt", "token.txt", ".github_token.txt"]:
+        if os.path.exists(token_name):
+            try:
+                with open(token_name, "r", encoding="utf-8") as f:
+                    val = f.read().strip()
+                    if val:
+                        token = val
+                        break
+            except Exception:
+                pass
+
     for filename in FILES_TO_UPDATE:
         downloaded = False
         for branch in branches:
             raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filename}"
             try:
-                req = urllib.request.Request(raw_url, headers={'User-Agent': 'Mozilla/5.0'})
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                if token:
+                    headers['Authorization'] = f"token {token}"
+                req = urllib.request.Request(raw_url, headers=headers)
                 with urllib.request.urlopen(req, timeout=10) as response:
                     content = response.read()
                     with open(filename, 'wb') as f:
@@ -57,17 +73,34 @@ def update_from_github(repo_url: str) -> bool:
                     downloaded = True
                     updated_count += 1
                     break
+            except urllib.error.HTTPError as he:
+                if he.code in (401, 404) and not token:
+                    pass
+                continue
             except Exception:
                 continue
                 
         if not downloaded:
-            print(f"  ⚠️ Skipped / unchanged: {filename}")
+            print(f"  ⚠️ Skipped / not found: {filename}")
             
     if updated_count > 0:
         print(f"\n🎉 Successfully updated {updated_count} files from GitHub!")
         return True
     else:
-        print("\n❌ Could not download any files from that repository. Check the repo URL or branch name.")
+        print("\n❌ Could not download files from that repository.")
+        if not token:
+            print("🔒 If your repository is PRIVATE, a GitHub token is required.")
+            entered = input("👉 Paste your GitHub Personal Access Token (or press ENTER to skip): ").strip()
+            if entered:
+                try:
+                    with open("token.txt", "w", encoding="utf-8") as f:
+                        f.write(entered)
+                    print("💾 Saved token to 'token.txt'! Retrying update with token...\n")
+                    return update_from_github(repo_url)
+                except Exception as te:
+                    print(f"⚠️ Could not save token: {te}")
+        else:
+            print("💡 Check that your token in 'token.txt' has the 'repo' scope and has not expired.")
         return False
 
 def update_from_zip() -> bool:
@@ -124,17 +157,45 @@ def main():
     repo_file = ".github_repo"
     repo_url = None
     
-    if os.path.exists(repo_file):
-        try:
-            with open(repo_file, "r", encoding="utf-8") as f:
-                repo_url = f.read().strip()
-        except Exception:
-            repo_url = None
+    for candidate in [".github_repo", "github_repo.txt", "repo.txt"]:
+        if os.path.exists(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    val = f.read().strip()
+                    if val:
+                        repo_url = val
+                        repo_file = candidate
+                        break
+            except Exception:
+                pass
             
     success = False
     
     if repo_url:
-        print(f"📌 Found saved GitHub repository: {repo_url}")
+        print(f"📌 Current saved repository: {repo_url}")
+        print("   • Press [ENTER] to update using this repository")
+        print("   • Paste a NEW GitHub URL / repo to change it")
+        print("   • Type 'c' to clear and pick another option")
+        choice = input("\nAction [ENTER = Keep, or new URL/c]: ").strip()
+        
+        if choice.lower() in ['c', 'reset', 'clear', 'del', 'delete']:
+            try:
+                if os.path.exists(repo_file):
+                    os.remove(repo_file)
+            except Exception:
+                pass
+            repo_url = None
+            print("🗑️ Saved repository cleared!\n")
+        elif choice:
+            repo_url = choice
+            try:
+                with open(repo_file, "w", encoding="utf-8") as f:
+                    f.write(repo_url)
+                print(f"💾 Saved new repository: {repo_url}\n")
+            except Exception as e:
+                print(f"⚠️ Could not save repo file: {e}")
+
+    if repo_url:
         success = update_from_github(repo_url)
         
     if not success:
