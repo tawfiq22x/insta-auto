@@ -134,15 +134,29 @@ class LDPlayerAutomation:
             return False
 
     def _type_text(self, text: str):
-        """Type text into the current focused field in Android"""
-        escaped_text = text.replace(" ", "%s").replace("&", "\&").replace("$", "\$").replace("'", "\'")
+        """Type text into current focused field in Android with full special character escaping"""
+        escaped_chars = []
+        for ch in text:
+            if ch == ' ':
+                escaped_chars.append('%s')
+            elif ch in r'\$"&|;()<>`*?~#!=[]{}':
+                escaped_chars.append(f'\\{ch}')
+            elif ch == "'":
+                escaped_chars.append(r"\'")
+            else:
+                escaped_chars.append(ch)
+        escaped_text = "".join(escaped_chars)
         self._run_adb(f'shell input text "{escaped_text}"')
 
     def _clear_text_field(self, count: int = 35):
-        """Clear any existing text or auto-generated suggestions in a focused field"""
+        """Quickly clear existing text or suggestions in focused field"""
         try:
+            # Move cursor to end, select all via Ctrl+A, then delete
             self._run_adb("shell input keyevent 123") # KEYCODE_MOVE_END
-            del_keys = " ".join(["67"] * min(count, 40)) # KEYCODE_DEL
+            self._run_adb("shell input keyevent 29 --ctrl") # Select all
+            self._run_adb("shell input keyevent 67") # KEYCODE_DEL
+            # Safety backspaces
+            del_keys = " ".join(["67"] * min(count, 15))
             self._run_adb(f"shell input keyevent {del_keys}")
         except Exception:
             pass
@@ -215,8 +229,8 @@ class LDPlayerAutomation:
 
         return None
 
-    def tap_text(self, keywords, timeout: int = 6, fallback_ratio: Optional[Tuple[float, float]] = None) -> bool:
-        """Find an element by label text and tap it. Uses fallback ratio if text not found."""
+    def tap_text(self, keywords, timeout: int = 5, fallback_ratio: Optional[Tuple[float, float]] = None) -> bool:
+        """Find an element by label text and tap it. Fast polling with fallback ratio."""
         start_time = time.time()
         while time.time() - start_time < timeout:
             coords = self.find_text_coordinates(keywords)
@@ -225,7 +239,7 @@ class LDPlayerAutomation:
                 print(f"🎯 Found element '{keywords}' at ({cx}, {cy}). Tapping...")
                 self._tap(cx, cy)
                 return True
-            time.sleep(1.5)
+            time.sleep(0.6)
 
         if fallback_ratio:
             w, h = self.get_screen_size()
@@ -236,8 +250,8 @@ class LDPlayerAutomation:
 
         return False
 
-    def find_edit_text_coordinates(self, hint_keywords=None, xml_str: Optional[str] = None) -> Optional[Tuple[int, int]]:
-        """Find center coordinates of an EditText field (input box), prioritizing hint matches"""
+    def find_edit_text_coordinates(self, hint_keywords=None, xml_str: Optional[str] = None, is_password: bool = False) -> Optional[Tuple[int, int]]:
+        """Find center coordinates of an EditText field, checking password attributes, resource-ids, and hints"""
         import re
         import xml.etree.ElementTree as ET
 
@@ -256,21 +270,39 @@ class LDPlayerAutomation:
             root = ET.fromstring(clean_xml)
             
             edit_texts = []
+            password_nodes = []
             for node in root.iter('node'):
                 node_class = node.attrib.get('class', '')
-                # Specifically identify input fields, not text view titles
-                if 'EditText' in node_class or (node.attrib.get('focusable') == 'true' and 'clickable' in node.attrib and 'Text' in node_class):
+                node_pwd = node.attrib.get('password') == 'true'
+                res_id = (node.attrib.get('resource-id', '') or '').lower()
+                
+                if node_pwd or 'password' in res_id:
+                    password_nodes.append(node)
+
+                # Identify any input field
+                if 'EditText' in node_class or node_pwd or (node.attrib.get('focusable') == 'true' and 'clickable' in node.attrib and 'Text' in node_class):
                     edit_texts.append(node)
-                    
-            # 1. Match against hint, text, or content-desc
+
+            # Prioritize password node if is_password
+            if is_password and password_nodes:
+                bounds_str = password_nodes[0].attrib.get('bounds', '')
+                bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                if len(bounds_match) == 2:
+                    x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
+                    x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
+                    return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+            # Match against hint, text, resource-id, or content-desc
             if hint_keywords:
                 for node in edit_texts:
                     node_text = (node.attrib.get('text', '') or '').strip().lower()
                     node_hint = (node.attrib.get('hint', '') or '').strip().lower()
                     node_desc = (node.attrib.get('content-desc', '') or '').strip().lower()
+                    node_res = (node.attrib.get('resource-id', '') or '').strip().lower()
                     for kw in hint_keywords:
                         kw_lower = kw.lower()
-                        if kw_lower in node_text or kw_lower in node_hint or kw_lower in node_desc:
+                        if (kw_lower in node_text or kw_lower in node_hint or 
+                            kw_lower in node_desc or kw_lower in node_res):
                             bounds_str = node.attrib.get('bounds', '')
                             bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
                             if len(bounds_match) == 2:
@@ -278,7 +310,7 @@ class LDPlayerAutomation:
                                 x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
                                 return ((x1 + x2) // 2, (y1 + y2) // 2)
 
-            # 2. Fallback to the first actual EditText field on screen
+            # Fallback to the first actual EditText field on screen
             if edit_texts:
                 bounds_str = edit_texts[0].attrib.get('bounds', '')
                 bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
@@ -290,6 +322,12 @@ class LDPlayerAutomation:
             pass
 
         # Regex fallback for EditText bounds
+        if is_password:
+            match_pwd = re.search(r'password="true"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str)
+            if match_pwd:
+                x1, y1, x2, y2 = map(int, match_pwd.groups())
+                return ((x1 + x2) // 2, (y1 + y2) // 2)
+
         match = re.search(r'class="[^"]*EditText[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml_str)
         if match:
             x1, y1, x2, y2 = map(int, match.groups())
@@ -297,9 +335,45 @@ class LDPlayerAutomation:
 
         return None
 
-    def enter_text_to_field(self, text: str, hint_keywords=None, fallback_ratio=(0.50, 0.35)) -> bool:
-        """Find the real EditText field, tap it to focus, clear it, and type text with verification"""
-        coords = self.find_edit_text_coordinates(hint_keywords)
+    def enter_password(self, password: str, fallback_ratio=(0.50, 0.35)) -> bool:
+        """
+        Specifically handles Instagram password entry:
+        1. Accurately focuses password field via password="true", resource-id or hint
+        2. Clears previous text
+        3. Enters password via escaped ADB input text
+        4. Dismisses software keyboard so 'Next' button is immediately accessible
+        5. Does not stall on plaintext verification (since Android masks passwords)
+        """
+        coords = self.find_edit_text_coordinates(hint_keywords=["password", "create a password", "choose a password"], is_password=True)
+        if coords:
+            cx, cy = coords
+            print(f"🎯 Focusing password field at ({cx}, {cy})...")
+            self._tap(cx, cy)
+        elif fallback_ratio:
+            w, h = self.get_screen_size()
+            cx, cy = int(w * fallback_ratio[0]), int(h * fallback_ratio[1])
+            print(f"🎯 Fallback tap for password field at ({cx}, {cy})...")
+            self._tap(cx, cy)
+
+        time.sleep(0.3)
+        self._clear_text_field(40)
+        time.sleep(0.15)
+
+        # Enter password via safely escaped text
+        self._type_text(password)
+        time.sleep(0.4)
+
+        # Dismiss soft keyboard to reveal 'Next' button
+        self._run_adb("shell input keyevent 111") # KEYCODE_ESCAPE
+        time.sleep(0.2)
+        return True
+
+    def enter_text_to_field(self, text: str, hint_keywords=None, fallback_ratio=(0.50, 0.35), is_password: bool = False) -> bool:
+        """Find the real EditText field, tap it to focus, clear it, and type text with fast verification"""
+        if is_password:
+            return self.enter_password(text, fallback_ratio=fallback_ratio)
+
+        coords = self.find_edit_text_coordinates(hint_keywords, is_password=is_password)
         if coords:
             cx, cy = coords
             print(f"🎯 Tapping input field at ({cx}, {cy})...")
@@ -310,39 +384,139 @@ class LDPlayerAutomation:
             print(f"🎯 Fallback tap for input field at ({cx}, {cy})...")
             self._tap(cx, cy)
             
-        time.sleep(0.8)
-        self._clear_text_field(40)
         time.sleep(0.3)
+        self._clear_text_field(40)
+        time.sleep(0.15)
         
         # Method 1: Type via ADB input text
         self._type_text(text)
-        time.sleep(1)
+        time.sleep(0.4)
         
-        # Verify text was received
+        # Quick verify text was received
         ui_after = self.dump_ui()
-        # Check if full text or at least first 4 chars appeared in UI
-        sample = text[:min(len(text), 6)].lower()
+        sample = text[:min(len(text), 5)].lower()
         if sample in ui_after.lower():
             return True
             
         # Method 2: If input text was not entered, tap again and paste via clipboard
         if coords:
             self._tap(coords[0], coords[1])
-            time.sleep(0.4)
+            time.sleep(0.2)
             
         try:
             self._run_adb(f'shell cmd clipboard set text "{text}"')
-            time.sleep(0.3)
+            time.sleep(0.2)
             self._run_adb("shell input keyevent 279") # KEYCODE_PASTE
-            time.sleep(0.5)
+            time.sleep(0.3)
         except Exception:
             pass
             
-        ui_after2 = self.dump_ui()
-        if sample in ui_after2.lower():
-            return True
-            
-        return False
+        return True
+
+    def find_birthday_picker_info(self, xml_str: Optional[str] = None) -> Tuple[int, int, int, int]:
+        """
+        Locates the scrollable birthday date picker wheels (Month, Day, Year).
+        Returns (year_x, year_y, y_top, y_bottom).
+        """
+        import re
+        import xml.etree.ElementTree as ET
+
+        w, h = self.get_screen_size()
+        if not xml_str:
+            xml_str = self.dump_ui()
+
+        # 1. Search for 4-digit year element in XML (e.g. 2026, 2025, 2024, 2005)
+        try:
+            xml_start = xml_str.find("<?xml")
+            clean_xml = xml_str[xml_start:] if xml_start != -1 else xml_str
+            root = ET.fromstring(clean_xml)
+
+            # Check for year text node
+            for node in root.iter('node'):
+                text = (node.attrib.get('text', '') or '').strip()
+                if re.match(r'^(?:19\d{2}|20\d{2})$', text):
+                    bounds_str = node.attrib.get('bounds', '')
+                    bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                    if len(bounds_match) == 2:
+                        x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
+                        x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
+                        year_x = (x1 + x2) // 2
+                        year_y = (y1 + y2) // 2
+                        y_top = max(0, year_y - int(h * 0.10))
+                        y_bottom = min(h, year_y + int(h * 0.10))
+                        return (year_x, year_y, y_top, y_bottom)
+
+            # Check for NumberPicker elements
+            pickers = []
+            for node in root.iter('node'):
+                node_class = node.attrib.get('class', '')
+                if 'NumberPicker' in node_class or 'DatePicker' in node_class:
+                    bounds_str = node.attrib.get('bounds', '')
+                    bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                    if len(bounds_match) == 2:
+                        x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
+                        x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
+                        pickers.append((x1, y1, x2, y2))
+
+            if pickers:
+                # Sort by horizontal position (rightmost picker is Year in LTR)
+                pickers.sort(key=lambda p: p[0])
+                p = pickers[-1]
+                year_x = (p[0] + p[2]) // 2
+                year_y = (p[1] + p[3]) // 2
+                y_top = p[1] + int((p[3] - p[1]) * 0.15)
+                y_bottom = p[3] - int((p[3] - p[1]) * 0.15)
+                return (year_x, year_y, y_top, y_bottom)
+        except Exception:
+            pass
+
+        # 2. Geometric fallback for portrait mobile screen
+        year_x = int(w * 0.78)
+        year_y = int(h * 0.72)
+        y_top = int(h * 0.62)
+        y_bottom = int(h * 0.82)
+        return (year_x, year_y, y_top, y_bottom)
+
+    def set_birthday(self, log_cb=None) -> bool:
+        """
+        Rolls the scrollable Year wheel back by 20-25 years to ensure the account
+        is an adult age (e.g. Year ~2000), confirms dialog 'SET' button, and taps 'Next'.
+        """
+        def log(msg, level="info"):
+            if log_cb:
+                try:
+                    log_cb(msg, level)
+                except Exception:
+                    pass
+
+        w, h = self.get_screen_size()
+        log("🎂 Locating scrollable Birthday picker...", "info")
+        xml = self.dump_ui()
+        year_x, year_y, y_top, y_bottom = self.find_birthday_picker_info(xml)
+
+        log(f"🔄 Scrolling Year wheel backwards at x={year_x}...", "info")
+        # Swiping down from top to bottom on Android NumberPicker pulls past years down
+        for i in range(6):
+            self._run_adb(f"shell input swipe {year_x} {y_top} {year_x} {y_bottom} 130")
+            time.sleep(0.08)
+
+        # Give Month (left) and Day (middle) 1 natural swipe
+        month_x = int(w * 0.22)
+        day_x = int(w * 0.50)
+        self._run_adb(f"shell input swipe {month_x} {y_top} {month_x} {y_bottom} 150")
+        time.sleep(0.05)
+        self._run_adb(f"shell input swipe {day_x} {y_top} {day_x} {y_bottom} 150")
+        time.sleep(0.4)
+
+        # Confirm dialog if there is a 'SET' / 'Set' / 'OK' button on popup
+        log("👉 Confirming date of birth selection...", "info")
+        self.tap_text(["Set", "SET", "Ok", "OK", "Done", "Confirm"], timeout=1.2)
+        time.sleep(0.5)
+
+        # Tap the main 'Next' button
+        log("👉 Tapping 'Next' on Birthday screen...", "info")
+        self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.42))
+        return True
 
     def get_clipboard(self) -> str:
         """Read Android clipboard string via ADB"""
@@ -594,7 +768,7 @@ class LDPlayerAutomation:
             if "get started" not in ui_check and "create new account" not in ui_check:
                 log("🚀 Opening Instagram app...", "info")
                 self.launch_instagram()
-                time.sleep(6)
+                time.sleep(3.5)
             else:
                 log("Instagram is already open on the welcome screen!", "info")
 
@@ -603,83 +777,85 @@ class LDPlayerAutomation:
             # In modern Instagram, 'Get started' is the main button at ~70% down the screen
             tapped_start = self.tap_text(
                 ["Get started", "Create new account", "Sign up"],
-                timeout=6,
+                timeout=4,
                 fallback_ratio=(0.50, 0.70)
             )
-            time.sleep(4)
+            time.sleep(1.5)
 
             # 3. Step-by-Step Registration Loop
             # Modern Instagram asks: Name -> Password -> Save info -> Birthday -> Username -> Mobile/Email -> Code
+            name_entered = False
+            password_entered = False
+            birthday_set = False
+            username_entered = False
             email_entered = False
             code_entered = False
+            terms_agreed = False
 
-            for step_round in range(1, 18):
+            for step_round in range(1, 20):
                 ui = self.dump_ui().lower()
 
                 # A. Name Step ("What's your name?" / "Full name")
-                if ("name" in ui or "what's your name" in ui) and not email_entered and "username" not in ui and "email" not in ui:
+                if not name_entered and ("what's your name" in ui or "full name" in ui or ("name" in ui and not password_entered and not birthday_set and not email_entered)):
                     log(f"📝 Entering Name: {account_data['full_name']}...", "info")
                     self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35))
-                    time.sleep(1)
-                    self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
-                    time.sleep(3)
+                    self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
+                    name_entered = True
+                    time.sleep(0.8)
                     continue
 
                 # B. Password Step ("Create a password")
-                if "password" in ui and "create a password" in ui:
-                    log("🔒 Entering Password...", "info")
-                    self.enter_text_to_field(account_data['password'], hint_keywords=["password"], fallback_ratio=(0.50, 0.35))
-                    time.sleep(1)
-                    self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
-                    time.sleep(3)
+                if not password_entered and ("password" in ui or "create a password" in ui or "choose a password" in ui or "set a password" in ui):
+                    log("🔒 Entering Password with secure auto-focus & keyboard dismissal...", "info")
+                    self.enter_password(account_data['password'], fallback_ratio=(0.50, 0.35))
+                    self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
+                    password_entered = True
+                    time.sleep(0.8)
                     continue
 
                 # C. Save login info prompt ("Save your login info?")
                 if "save your login info" in ui or ("save" in ui and "not now" in ui):
                     log("💾 Tapping 'Save' on login info...", "info")
-                    self.tap_text(["Save", "Not now"], timeout=3, fallback_ratio=(0.50, 0.45))
-                    time.sleep(3)
+                    self.tap_text(["Save", "Not now"], timeout=2.0, fallback_ratio=(0.50, 0.45))
+                    time.sleep(0.8)
                     continue
 
                 # D. Birthday Step ("What's your birthday?")
-                if "birthday" in ui or "date of birth" in ui:
-                    log("🎂 Setting Birthday...", "info")
-                    # If there is a 'Set' confirmation button on dialog
-                    self.tap_text(["Set"], timeout=2)
-                    time.sleep(1)
-                    self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.85))
-                    time.sleep(3)
+                if not birthday_set and ("birthday" in ui or "date of birth" in ui or "how old are you" in ui or "set date" in ui):
+                    log("🎂 Setting Birthday via scrollable wheel picker...", "info")
+                    self.set_birthday(log_cb=log)
+                    birthday_set = True
+                    time.sleep(1.0)
                     continue
 
                 # E. Username Step ("Create a username")
-                if "create a username" in ui or ("username" in ui and "next" in ui and not email_entered):
-                    log(f"👤 Setting Username from task Login: {account_data['username']}...", "info")
+                if not username_entered and ("create a username" in ui or "choose a username" in ui or ("username" in ui and not email_entered)):
+                    log(f"👤 Setting Username: {account_data['username']}...", "info")
                     self.enter_text_to_field(account_data['username'], hint_keywords=["username"], fallback_ratio=(0.50, 0.35))
-                    time.sleep(1)
-                    self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
-                    time.sleep(4)
+                    self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
+                    username_entered = True
+                    time.sleep(1.0)
                     continue
 
                 # F. Mobile Number Prompt -> Switch to Email ("Sign up with email")
-                if ("mobile" in ui or "phone" in ui or "what's your mobile" in ui) and not email_entered:
+                if not email_entered and ("mobile" in ui or "phone" in ui or "what's your mobile" in ui):
                     log("📧 Selecting 'Sign up with email' instead of phone...", "info")
-                    switched = self.tap_text(["Sign up with email", "email", "Use email"], timeout=4, fallback_ratio=(0.50, 0.90))
-                    time.sleep(3)
+                    self.tap_text(["Sign up with email", "email", "Use email"], timeout=2.5, fallback_ratio=(0.50, 0.90))
+                    time.sleep(0.8)
                     ui = self.dump_ui().lower()
 
                 # G. Email Entry ("What's your email?" / "Email")
-                if "email" in ui and not email_entered and not code_entered:
+                if not email_entered and not code_entered and ("what's your email" in ui or "email" in ui):
                     log(f"✉️ Entering Email: {account_data['email']}...", "info")
                     self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email"], fallback_ratio=(0.50, 0.35))
-                    time.sleep(1)
                     log("👉 Tapping 'Next' to send verification code...", "info")
-                    self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
+                    self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
                     email_entered = True
-                    time.sleep(5)
+                    time.sleep(1.8)
                     continue
 
                 # H. Confirmation Code Step ("Enter confirmation code" / "Confirmation code")
-                if ("confirmation code" in ui or "enter the 6-digit" in ui or "check your email" in ui) and not code_entered:
+                if not code_entered and ("confirmation code" in ui or "enter the 6-digit" in ui or "check your email" in ui):
                     log("📬 Instagram sent verification email! Waiting for OTP code from EasyEarn...", "task")
                     
                     received_code = otp_code
@@ -690,40 +866,40 @@ class LDPlayerAutomation:
                             received_code = otp_fetcher()
                             if received_code:
                                 break
-                            time.sleep(5)
+                            time.sleep(4)
 
                     if received_code:
                         log(f"🔑 OTP Code received: {received_code}! Entering into Instagram...", "success")
                         self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35))
-                        time.sleep(1)
-                        self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.45))
+                        self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
                         code_entered = True
-                        time.sleep(6)
+                        time.sleep(2.0)
                         continue
                     else:
                         log("⚠️ Did not receive OTP code in time. Will retry on next cycle.", "warning")
                         break
 
                 # I. Terms and Policies ("I agree")
-                if "i agree" in ui or "agree to instagram" in ui:
+                if not terms_agreed and ("i agree" in ui or "agree to instagram" in ui or "terms" in ui):
                     log("📜 Tapping 'I agree' to Terms...", "info")
-                    self.tap_text(["I agree", "Agree"], timeout=3, fallback_ratio=(0.50, 0.90))
-                    time.sleep(8)
+                    self.tap_text(["I agree", "Agree"], timeout=2.5, fallback_ratio=(0.50, 0.90))
+                    terms_agreed = True
+                    time.sleep(3.0)
                     continue
 
                 # J. Add a profile picture / Skip screens
                 if "add picture" in ui or "profile picture" in ui or "skip" in ui:
                     log("⏭️ Skipping profile photo / contacts...", "info")
-                    self.tap_text(["Skip", "Not now"], timeout=3, fallback_ratio=(0.50, 0.90))
-                    time.sleep(3)
+                    self.tap_text(["Skip", "Not now"], timeout=2.0, fallback_ratio=(0.50, 0.90))
+                    time.sleep(1.0)
                     continue
 
                 # If reached feed or search or home, registration is finished!
-                if "feed" in ui or "direct" in ui or "reels" in ui or (email_entered and code_entered):
+                if "feed" in ui or "direct" in ui or "reels" in ui or (email_entered and code_entered and terms_agreed):
                     log("🎉 Account creation completed successfully on Instagram!", "success")
                     break
 
-                time.sleep(3)
+                time.sleep(1.0)
 
             # Step 4: Real Two-Factor Authentication (2FA) Setup
             twofa_key = ""

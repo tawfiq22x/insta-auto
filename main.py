@@ -58,7 +58,7 @@ class InstagramAutomationController:
         
         # Load version info
         self.version_info = self.get_version_info()
-        curr_ver = self.version_info.get("version", "1.4.2")
+        curr_ver = self.version_info.get("version", "1.4.3")
         self.root.title(f"🤖 Instagram Automation Suite - v{curr_ver}")
         self.root.geometry("1120x800")
         self.root.minsize(1000, 720)
@@ -90,15 +90,16 @@ class InstagramAutomationController:
     def get_version_info(self) -> dict:
         """Load version and release details from version.json"""
         default_info = {
-            "version": "1.4.2",
-            "release_date": "2026-09-11 16:50",
-            "build_id": "v1.4.2-rel",
+            "version": "1.4.3",
+            "release_date": "2026-09-11 17:15",
+            "build_id": "v1.4.3-rel",
             "features": [
+                "Fixed Password entry: direct focus matching, special character escaping & soft keyboard dismissal",
+                "Smart Birthday wheel automation: auto-scrolls Year backwards ~20-25 years and confirms DatePicker dialogs",
+                "High-speed registration workflow: streamlined screen transitions and instant field clearing",
                 "Added Version & Updates tab with live update status and file integrity check",
                 "Persistent LDPlayer path: instant auto-save to config.json upon browsing",
-                "Private GitHub repository support with token.txt authentication",
-                "Automated 1-Click ZIP extraction & sync from Downloads",
-                "Enhanced LDPlayer APK verification and stealth browser launcher"
+                "Private GitHub repository support with token.txt authentication"
             ]
         }
         if os.path.exists("version.json"):
