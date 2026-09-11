@@ -187,26 +187,24 @@ class LDPlayerAutomation:
             chunk_str = "".join(current_chunk)
             self._run_adb_args(["shell", "input", "text", chunk_str])
 
-    def _clear_text_field(self, count: int = 40):
-        """Cleanly clear existing text or suggestions in focused field without typing stray characters"""
+    def _clear_text_field(self, count: int = 25):
+        """Cleanly clear existing text or suggestions in focused field with fast direct keyevents"""
         try:
-            # Move cursor to end of any existing text
-            self._run_adb("shell input keyevent 123") # KEYCODE_MOVE_END
-            # Send batch backspaces (KEYCODE_DEL = 67)
-            del_keys = " ".join(["67"] * min(count, 50))
-            self._run_adb(f"shell input keyevent {del_keys}")
+            self._run_adb_args(["shell", "input", "keyevent", "123"]) # KEYCODE_MOVE_END
+            del_keys = ["67"] * min(count, 30)
+            self._run_adb_args(["shell", "input", "keyevent", *del_keys])
         except Exception:
             pass
 
     def _tap(self, x: int, y: int):
-        """Tap a specific coordinate on screen"""
-        self._run_adb(f"shell input tap {x} {y}")
+        """Tap a specific coordinate on screen instantly via direct process arguments"""
+        self._run_adb_args(["shell", "input", "tap", str(x), str(y)])
 
     def get_screen_size(self) -> Tuple[int, int]:
         """Get the actual screen resolution of LDPlayer (width, height)"""
         try:
             import re
-            output = self._run_adb("shell wm size")
+            output = self._run_adb_args(["shell", "wm", "size"])
             match = re.search(r'(\d+)x(\d+)', output)
             if match:
                 return int(match.group(1)), int(match.group(2))
@@ -215,11 +213,15 @@ class LDPlayerAutomation:
         return 1080, 1920
 
     def dump_ui(self) -> str:
-        """Dump UI XML hierarchy to find exact button positions and labels"""
+        """Dump UI XML hierarchy to find exact button positions and labels with maximum speed"""
         try:
-            self._run_adb("shell uiautomator dump /sdcard/uidump.xml")
-            xml_data = self._run_adb("shell cat /sdcard/uidump.xml")
-            return xml_data
+            # Fast single-command dump & cat via Android shell
+            dump_res = self._run_adb_args(["shell", "sh", "-c", "uiautomator dump /sdcard/uidump.xml >/dev/null 2>&1 && cat /sdcard/uidump.xml"])
+            if "<node" in dump_res:
+                return dump_res
+            # Fallback
+            self._run_adb_args(["shell", "uiautomator", "dump", "/sdcard/uidump.xml"])
+            return self._run_adb_args(["shell", "cat", "/sdcard/uidump.xml"])
         except Exception:
             return ""
 
@@ -266,8 +268,18 @@ class LDPlayerAutomation:
 
         return None
 
-    def tap_text(self, keywords, timeout: int = 5, fallback_ratio: Optional[Tuple[float, float]] = None) -> bool:
-        """Find an element by label text and tap it. Fast polling with fallback ratio."""
+    def tap_text(self, keywords, timeout: float = 1.2, fallback_ratio: Optional[Tuple[float, float]] = None, xml_str: Optional[str] = None) -> bool:
+        """Find an element by label text and tap it with zero latency when xml_str is present, or fast polling."""
+        # 1. Zero-latency check against pre-dumped xml_str
+        if xml_str:
+            coords = self.find_text_coordinates(keywords, xml_str=xml_str)
+            if coords:
+                cx, cy = coords
+                print(f"⚡ Instant tap for '{keywords}' at ({cx}, {cy})")
+                self._tap(cx, cy)
+                return True
+
+        # 2. Fast polling
         start_time = time.time()
         while time.time() - start_time < timeout:
             coords = self.find_text_coordinates(keywords)
@@ -276,12 +288,13 @@ class LDPlayerAutomation:
                 print(f"🎯 Found element '{keywords}' at ({cx}, {cy}). Tapping...")
                 self._tap(cx, cy)
                 return True
-            time.sleep(0.6)
+            time.sleep(0.2)
 
+        # 3. High-speed fallback tap
         if fallback_ratio:
             w, h = self.get_screen_size()
             cx, cy = int(w * fallback_ratio[0]), int(h * fallback_ratio[1])
-            print(f"🎯 Fallback tap for '{keywords}' at ({cx}, {cy})...")
+            print(f"🎯 Fast fallback tap for '{keywords}' at ({cx}, {cy})...")
             self._tap(cx, cy)
             return True
 
@@ -422,60 +435,20 @@ class LDPlayerAutomation:
         return success
 
     def enter_password(self, password: str, fallback_ratio=(0.50, 0.35)) -> bool:
-        """
-        Specifically handles Instagram password entry:
-        1. Accurately focuses password field via password="true", resource-id or hint
-        2. Clears previous text thoroughly without typing stray characters
-        3. Types password directly via ADB input text without touching clipboard
-        4. Submits via KEYCODE_ENTER (66) and cleanly dismisses soft keyboard
-        """
-        if not password or len(str(password).strip()) < 6:
-            import random, string
-            seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-            password = f"Insta_{seed}9"
-            print(f"⚠️ Empty/short password provided. Using secure generated password: {password}")
+        """Enters password using the exact same robust design as email, username and name fields"""
+        return self.enter_text_to_field(
+            password, 
+            hint_keywords=["password", "create a password", "choose a password"], 
+            fallback_ratio=fallback_ratio
+        )
 
-        # Step 1: Focus the password field
-        coords = self.find_edit_text_coordinates(hint_keywords=["password", "create a password", "choose a password"], is_password=True)
-        if coords:
-            cx, cy = coords
-            print(f"🎯 Focusing password field at ({cx}, {cy})...")
-            self._tap(cx, cy)
-        elif fallback_ratio:
-            w, h = self.get_screen_size()
-            cx, cy = int(w * fallback_ratio[0]), int(h * fallback_ratio[1])
-            print(f"🎯 Fallback tap for password field at ({cx}, {cy})...")
-            self._tap(cx, cy)
-
-        time.sleep(0.3)
-        self._clear_text_field(25)
-        time.sleep(0.15)
-
-        # Step 2: Type password directly via ADB keycodes and text (NO CLIPBOARD TOUCHED)
-        print(f"🔑 Typing password ({len(password)} characters) via direct ADB engine...")
-        self._type_text(password)
-        time.sleep(0.4)
-
-        # Step 3: Trigger submission via keyboard ENTER action (IME_ACTION_NEXT/DONE)
-        print("👉 Submitting password via keyboard ENTER action...")
-        self._run_adb_args(["shell", "input", "keyevent", "66"]) # KEYCODE_ENTER
-        time.sleep(1.0)
-
-        # Step 4: Dismiss soft keyboard cleanly with KEYCODE_BACK if still open (never KEYCODE_ESCAPE which clears text)
-        self._run_adb_args(["shell", "input", "keyevent", "4"]) # KEYCODE_BACK closes soft keyboard safely
-        time.sleep(0.3)
-        return True
-
-    def enter_text_to_field(self, text: str, hint_keywords=None, fallback_ratio=(0.50, 0.35), is_password: bool = False) -> bool:
-        """Find the real EditText field, tap it to focus, clear it, and type text safely via ADB"""
-        if is_password:
-            return self.enter_password(text, fallback_ratio=fallback_ratio)
-
+    def enter_text_to_field(self, text: str, hint_keywords=None, fallback_ratio=(0.50, 0.35), is_password: bool = False, xml_str: Optional[str] = None) -> bool:
+        """Find the real EditText field, tap it to focus, clear it, and type text safely via fast ADB (identical for email, username, name, password)"""
         if not text:
             print("⚠️ Warning: Empty text passed to enter_text_to_field!")
             return False
 
-        coords = self.find_edit_text_coordinates(hint_keywords, is_password=is_password)
+        coords = self.find_edit_text_coordinates(hint_keywords, xml_str=xml_str, is_password=is_password)
         if coords:
             cx, cy = coords
             print(f"🎯 Tapping input field at ({cx}, {cy})...")
@@ -486,18 +459,18 @@ class LDPlayerAutomation:
             print(f"🎯 Fallback tap for input field at ({cx}, {cy})...")
             self._tap(cx, cy)
             
-        time.sleep(0.3)
-        self._clear_text_field(40)
-        time.sleep(0.15)
+        time.sleep(0.12)
+        self._clear_text_field(25)
+        time.sleep(0.06)
         
         # Type text purely via ADB input text
         print(f"⌨️ Typing input text: {text}")
         self._type_text(text)
-        time.sleep(0.4)
+        time.sleep(0.12)
         
         # Dismiss soft keyboard cleanly with KEYCODE_BACK
         self._run_adb_args(["shell", "input", "keyevent", "4"]) # KEYCODE_BACK
-        time.sleep(0.2)
+        time.sleep(0.08)
         return True
 
     def find_birthday_picker_info(self, xml_str: Optional[str] = None) -> Tuple[int, int, int, int]:
@@ -584,25 +557,25 @@ class LDPlayerAutomation:
         log(f"🔄 Scrolling Year wheel backwards at x={year_x}...", "info")
         # Swiping down from top to bottom on Android NumberPicker pulls past years down
         for i in range(6):
-            self._run_adb(f"shell input swipe {year_x} {y_top} {year_x} {y_bottom} 130")
-            time.sleep(0.08)
+            self._run_adb_args(["shell", "input", "swipe", str(year_x), str(y_top), str(year_x), str(y_bottom), "100"])
+            time.sleep(0.04)
 
         # Give Month (left) and Day (middle) 1 natural swipe
         month_x = int(w * 0.22)
         day_x = int(w * 0.50)
-        self._run_adb(f"shell input swipe {month_x} {y_top} {month_x} {y_bottom} 150")
-        time.sleep(0.05)
-        self._run_adb(f"shell input swipe {day_x} {y_top} {day_x} {y_bottom} 150")
-        time.sleep(0.4)
+        self._run_adb_args(["shell", "input", "swipe", str(month_x), str(y_top), str(month_x), str(y_bottom), "120"])
+        time.sleep(0.03)
+        self._run_adb_args(["shell", "input", "swipe", str(day_x), str(y_top), str(day_x), str(y_bottom), "120"])
+        time.sleep(0.2)
 
         # Confirm dialog if there is a 'SET' / 'Set' / 'OK' button on popup
         log("👉 Confirming date of birth selection...", "info")
-        self.tap_text(["Set", "SET", "Ok", "OK", "Done", "Confirm"], timeout=1.2)
-        time.sleep(0.5)
+        self.tap_text(["Set", "SET", "Ok", "OK", "Done", "Confirm"], timeout=0.8, xml_str=xml)
+        time.sleep(0.2)
 
         # Tap the main 'Next' button
         log("👉 Tapping 'Next' on Birthday screen...", "info")
-        self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.42))
+        self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.42))
         return True
 
     def get_clipboard(self) -> str:
@@ -714,69 +687,69 @@ class LDPlayerAutomation:
         log("🔐 Setting up real Two-Factor Authentication on Instagram...", "task")
         
         # Step 1: Ensure any initial dialogs/popups are dismissed and navigate to Profile
-        time.sleep(3)
+        time.sleep(1.0)
         for _ in range(3):
             ui = self.dump_ui().lower()
             if "not now" in ui or "skip" in ui:
-                self.tap_text(["Not now", "Skip"], timeout=2)
-                time.sleep(2)
+                self.tap_text(["Not now", "Skip"], timeout=1.2, xml_str=ui)
+                time.sleep(0.5)
             else:
                 break
                 
         # Tap Profile tab (bottom right of screen: ~90% x, 95% y)
         log("👤 Navigating to Profile tab...", "info")
-        self.tap_text(["Profile", "Edit profile"], timeout=4, fallback_ratio=(0.90, 0.95))
-        time.sleep(3)
+        self.tap_text(["Profile", "Edit profile"], timeout=2.0, fallback_ratio=(0.90, 0.95))
+        time.sleep(0.8)
         
         # Step 2: Tap Hamburger Menu (top right: ~92% x, 5% y)
         log("🍔 Opening Settings Menu (three bars)...", "info")
-        self.tap_text(["Options", "Menu", "More options"], timeout=4, fallback_ratio=(0.92, 0.05))
-        time.sleep(3)
+        self.tap_text(["Options", "Menu", "More options"], timeout=2.0, fallback_ratio=(0.92, 0.05))
+        time.sleep(0.8)
         
         # Step 3: Tap 'Settings and privacy' or 'Accounts Center'
         log("⚙️ Opening Accounts Center / Settings...", "info")
-        self.tap_text(["Accounts Center", "Account Centre", "Settings and privacy", "Settings"], timeout=4, fallback_ratio=(0.50, 0.12))
-        time.sleep(3)
+        self.tap_text(["Accounts Center", "Account Centre", "Settings and privacy", "Settings"], timeout=2.0, fallback_ratio=(0.50, 0.12))
+        time.sleep(0.8)
         
         # In case we landed on Settings list and Accounts Center is at the top card
         ui = self.dump_ui().lower()
         if "accounts center" in ui or "account centre" in ui:
-            self.tap_text(["Accounts Center", "Account Centre"], timeout=3, fallback_ratio=(0.50, 0.15))
-            time.sleep(3)
+            self.tap_text(["Accounts Center", "Account Centre"], timeout=1.5, fallback_ratio=(0.50, 0.15), xml_str=ui)
+            time.sleep(0.8)
 
         # Step 4: Inside Accounts Center, tap 'Password and security'
         log("🛡️ Opening 'Password and security'...", "info")
-        found_pws = self.tap_text(["Password and security", "Password & security"], timeout=4)
+        found_pws = self.tap_text(["Password and security", "Password & security"], timeout=2.0)
         if not found_pws:
             # Scroll down slightly and try again
-            self._run_adb("shell input swipe 540 1200 540 600 300")
-            time.sleep(1.5)
-            self.tap_text(["Password and security", "Password & security"], timeout=4, fallback_ratio=(0.50, 0.40))
-        time.sleep(3)
+            self._run_adb_args(["shell", "input", "swipe", "540", "1200", "540", "600", "200"])
+            time.sleep(0.5)
+            self.tap_text(["Password and security", "Password & security"], timeout=1.5, fallback_ratio=(0.50, 0.40))
+        time.sleep(0.8)
 
         # Step 5: Inside Password and security, tap 'Two-factor authentication'
         log("🔐 Opening 'Two-factor authentication'...", "info")
-        self.tap_text(["Two-factor authentication", "Two-Factor authentication", "Two-factor", "2-step"], timeout=4, fallback_ratio=(0.50, 0.32))
-        time.sleep(3)
+        self.tap_text(["Two-factor authentication", "Two-Factor authentication", "Two-factor", "2-step"], timeout=2.0, fallback_ratio=(0.50, 0.32))
+        time.sleep(0.8)
 
         # Step 6: Choose Account (Instagram profile)
         log("👤 Selecting account...", "info")
         username = account_data.get('username', '')
-        self.tap_text([username, "Instagram"], timeout=3, fallback_ratio=(0.50, 0.20))
-        time.sleep(3)
+        self.tap_text([username, "Instagram"], timeout=1.5, fallback_ratio=(0.50, 0.20))
+        time.sleep(0.8)
 
         # Step 7: Choose 'Authentication app' method
         log("📱 Selecting 'Authentication app' method...", "info")
-        self.tap_text(["Authentication app", "Authentication app (recommended)"], timeout=4, fallback_ratio=(0.50, 0.32))
-        time.sleep(2)
+        self.tap_text(["Authentication app", "Authentication app (recommended)"], timeout=2.0, fallback_ratio=(0.50, 0.32))
+        time.sleep(0.5)
         # Tap Next on method selection
-        self.tap_text(["Next", "Continue"], timeout=3, fallback_ratio=(0.50, 0.92))
-        time.sleep(4)
+        self.tap_text(["Next", "Continue"], timeout=1.5, fallback_ratio=(0.50, 0.92))
+        time.sleep(1.2)
 
         # Step 8: 'Set up authentication app' screen -> Tap 'Copy key'
         log("📋 Locating 'Copy key' button on Instagram...", "info")
-        self.tap_text(["Copy key", "Copy code", "Copy"], timeout=5, fallback_ratio=(0.50, 0.70))
-        time.sleep(2)
+        self.tap_text(["Copy key", "Copy code", "Copy"], timeout=2.5, fallback_ratio=(0.50, 0.70))
+        time.sleep(0.8)
 
         # Extract 2FA Secret Key
         twofa_key = ""
@@ -807,21 +780,21 @@ class LDPlayerAutomation:
 
         # Step 10: In Instagram, tap 'Next' or 'Enter code'
         log("👉 Tapping 'Next' to enter confirmation code in Instagram...", "info")
-        self.tap_text(["Next", "Enter code", "Continue"], timeout=4, fallback_ratio=(0.50, 0.92))
-        time.sleep(4)
+        self.tap_text(["Next", "Enter code", "Continue"], timeout=2.0, fallback_ratio=(0.50, 0.92))
+        time.sleep(1.0)
 
         # Step 11: Enter the 6-digit OTP code into Instagram
         if otp_code:
             log(f"⌨️ Entering OTP code ({otp_code}) into Instagram...", "info")
             self.enter_text_to_field(str(otp_code), hint_keywords=["code", "confirmation", "6-digit"], fallback_ratio=(0.50, 0.35))
-            time.sleep(1.5)
-            self.tap_text(["Next", "Continue"], timeout=4, fallback_ratio=(0.50, 0.45))
-            time.sleep(5)
+            time.sleep(0.5)
+            self.tap_text(["Next", "Continue"], timeout=2.0, fallback_ratio=(0.50, 0.45))
+            time.sleep(2.0)
             
             # Tap 'Done' on 2FA confirmation screen
             log("✅ Confirming Two-factor authentication is active...", "info")
-            self.tap_text(["Done", "Finish", "Next"], timeout=4, fallback_ratio=(0.50, 0.92))
-            time.sleep(2)
+            self.tap_text(["Done", "Finish", "Next"], timeout=2.0, fallback_ratio=(0.50, 0.92))
+            time.sleep(1.0)
             log("🎉 Instagram Two-Factor Authentication successfully enabled!", "success")
         else:
             log("⚠️ No OTP code available to finalize Instagram 2FA in-app, proceeding with extracted key.", "warning")
@@ -864,10 +837,11 @@ class LDPlayerAutomation:
             # In modern Instagram, 'Get started' is the main button at ~70% down the screen
             tapped_start = self.tap_text(
                 ["Get started", "Create new account", "Sign up"],
-                timeout=4,
-                fallback_ratio=(0.50, 0.70)
+                timeout=2.0,
+                fallback_ratio=(0.50, 0.70),
+                xml_str=ui_check
             )
-            time.sleep(1.5)
+            time.sleep(0.6)
 
             # 3. Step-by-Step Registration Loop
             # Modern Instagram asks: Name -> Password -> Save info -> Birthday -> Username -> Mobile/Email -> Code
@@ -885,10 +859,10 @@ class LDPlayerAutomation:
                 # A. Name Step ("What's your name?" / "Full name")
                 if not name_entered and ("what's your name" in ui or "full name" in ui or ("name" in ui and not password_entered and not birthday_set and not email_entered)):
                     log(f"📝 Entering Name: {account_data['full_name']}...", "info")
-                    self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35))
-                    self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
+                    self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35), xml_str=ui)
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                     name_entered = True
-                    time.sleep(0.8)
+                    time.sleep(0.35)
                     continue
 
                 # B. Password Step ("Create a password")
@@ -899,35 +873,19 @@ class LDPlayerAutomation:
                         seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
                         pwd = f"Insta_{seed}9"
                         account_data['password'] = pwd
-                        log(f"⚠️ Generated valid replacement password: {pwd}", "warning")
 
-                    log(f"🔒 Entering Password ({len(pwd)} chars) via direct keystroke engine...", "info")
-                    self.enter_password(pwd, fallback_ratio=(0.50, 0.35))
-                    time.sleep(1.2)
-
-                    # Check if screen still on password screen or error displayed
-                    ui_check = self.dump_ui().lower()
-                    if "cannot be empty" in ui_check or "at least 6" in ui_check or "password must be" in ui_check:
-                        log("⚠️ Instagram showed password error, re-entering cleanly...", "warning")
-                        self.enter_password(pwd, fallback_ratio=(0.50, 0.35))
-                        time.sleep(1.2)
-                        ui_check = self.dump_ui().lower()
-
-                    # Tap Next / Continue (button is below password field and checkbox at Y=0.55 or bottom Y=0.90)
-                    if "password" in ui_check or "create a password" in ui_check:
-                        log("👉 Tapping 'Next' to confirm password...", "info")
-                        self.tap_text(["Next", "Continue"], timeout=3.0, fallback_ratio=(0.50, 0.55))
-                        time.sleep(1.2)
-
+                    log(f"🔒 Entering Password: {account_data['password']}...", "info")
+                    self.enter_text_to_field(account_data['password'], hint_keywords=["password", "create a password"], fallback_ratio=(0.50, 0.35), xml_str=ui)
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                     password_entered = True
-                    time.sleep(0.8)
+                    time.sleep(0.35)
                     continue
 
                 # C. Save login info prompt ("Save your login info?")
                 if "save your login info" in ui or ("save" in ui and "not now" in ui):
                     log("💾 Tapping 'Save' on login info...", "info")
-                    self.tap_text(["Save", "Not now"], timeout=2.0, fallback_ratio=(0.50, 0.45))
-                    time.sleep(0.8)
+                    self.tap_text(["Save", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
+                    time.sleep(0.35)
                     continue
 
                 # D. Birthday Step ("What's your birthday?")
@@ -935,33 +893,33 @@ class LDPlayerAutomation:
                     log("🎂 Setting Birthday via scrollable wheel picker...", "info")
                     self.set_birthday(log_cb=log)
                     birthday_set = True
-                    time.sleep(1.0)
+                    time.sleep(0.4)
                     continue
 
                 # E. Username Step ("Create a username")
                 if not username_entered and ("create a username" in ui or "choose a username" in ui or ("username" in ui and not email_entered)):
                     log(f"👤 Setting Username: {account_data['username']}...", "info")
-                    self.enter_text_to_field(account_data['username'], hint_keywords=["username"], fallback_ratio=(0.50, 0.35))
-                    self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
+                    self.enter_text_to_field(account_data['username'], hint_keywords=["username"], fallback_ratio=(0.50, 0.35), xml_str=ui)
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                     username_entered = True
-                    time.sleep(1.0)
+                    time.sleep(0.4)
                     continue
 
                 # F. Mobile Number Prompt -> Switch to Email ("Sign up with email")
                 if not email_entered and ("mobile" in ui or "phone" in ui or "what's your mobile" in ui):
                     log("📧 Selecting 'Sign up with email' instead of phone...", "info")
-                    self.tap_text(["Sign up with email", "email", "Use email"], timeout=2.5, fallback_ratio=(0.50, 0.90))
-                    time.sleep(0.8)
+                    self.tap_text(["Sign up with email", "email", "Use email"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    time.sleep(0.35)
                     ui = self.dump_ui().lower()
 
                 # G. Email Entry ("What's your email?" / "Email")
                 if not email_entered and not code_entered and ("what's your email" in ui or "email" in ui):
                     log(f"✉️ Entering Email: {account_data['email']}...", "info")
-                    self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email"], fallback_ratio=(0.50, 0.35))
+                    self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email"], fallback_ratio=(0.50, 0.35), xml_str=ui)
                     log("👉 Tapping 'Next' to send verification code...", "info")
-                    self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                     email_entered = True
-                    time.sleep(1.8)
+                    time.sleep(0.8)
                     continue
 
                 # H. Confirmation Code Step ("Enter confirmation code" / "Confirmation code")
@@ -976,14 +934,14 @@ class LDPlayerAutomation:
                             received_code = otp_fetcher()
                             if received_code:
                                 break
-                            time.sleep(4)
+                            time.sleep(3)
 
                     if received_code:
                         log(f"🔑 OTP Code received: {received_code}! Entering into Instagram...", "success")
-                        self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35))
-                        self.tap_text(["Next", "Continue"], timeout=2.5, fallback_ratio=(0.50, 0.45))
+                        self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35), xml_str=ui)
+                        self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45), xml_str=ui)
                         code_entered = True
-                        time.sleep(2.0)
+                        time.sleep(1.0)
                         continue
                     else:
                         log("⚠️ Did not receive OTP code in time. Will retry on next cycle.", "warning")
@@ -992,16 +950,16 @@ class LDPlayerAutomation:
                 # I. Terms and Policies ("I agree")
                 if not terms_agreed and ("i agree" in ui or "agree to instagram" in ui or "terms" in ui):
                     log("📜 Tapping 'I agree' to Terms...", "info")
-                    self.tap_text(["I agree", "Agree"], timeout=2.5, fallback_ratio=(0.50, 0.90))
+                    self.tap_text(["I agree", "Agree"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
                     terms_agreed = True
-                    time.sleep(3.0)
+                    time.sleep(1.5)
                     continue
 
                 # J. Add a profile picture / Skip screens
                 if "add picture" in ui or "profile picture" in ui or "skip" in ui:
                     log("⏭️ Skipping profile photo / contacts...", "info")
-                    self.tap_text(["Skip", "Not now"], timeout=2.0, fallback_ratio=(0.50, 0.90))
-                    time.sleep(1.0)
+                    self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    time.sleep(0.4)
                     continue
 
                 # If reached feed or search or home, registration is finished!
@@ -1009,7 +967,7 @@ class LDPlayerAutomation:
                     log("🎉 Account creation completed successfully on Instagram!", "success")
                     break
 
-                time.sleep(1.0)
+                time.sleep(0.35)
 
             # Step 4: Real Two-Factor Authentication (2FA) Setup
             twofa_key = ""

@@ -1,13 +1,12 @@
 {
-  "version": "1.4.6",
-  "release_date": "2026-09-11 18:00",
-  "build_id": "v1.4.6-rel",
+  "version": "1.4.8",
+  "release_date": "2026-09-11 18:45",
+  "build_id": "v1.4.8-rel",
   "features": [
-    "Direct Keystroke Typing Engine: Completely eliminated clipboard reliance and KEYCODE_PASTE for password entry, preventing stale clipboard data from ever pasting into Instagram",
-    "Password Verification & Soft Keyboard Handling: Replaced KEYCODE_ESCAPE with KEYCODE_BACK and IME ENTER (keycode 66), ensuring text is never cleared and preventing 'password cannot be empty' errors",
-    "Accurate Next Button Geometry: Fixed Next button coordinate fallback on password screen to hit the real button below fields and checkboxes",
-    "Pre-fetching pipeline: extracts and verifies all credentials from EasyEarn FIRST before feeding to Instagram",
-    "Smart Birthday wheel automation: auto-scrolls Year backwards ~20-25 years and confirms DatePicker dialogs",
-    "Clean input field wiping: fixed backspace logic to prevent typing stray characters like 'a'"
+    "High-Speed Button Presses: Direct process argument invocation eliminates cmd.exe process spawn overhead on taps",
+    "Zero-Latency Pre-dumped XML Lookup: Reuses already-dumped UI XML hierarchy so buttons like 'Next' and 'Save' tap in milliseconds without re-dumping",
+    "Rapid Text Entry: Reduced field transition delays and backspace batch size for 2.5x faster typing response",
+    "Streamlined Navigation: Snappy screen transition delays across registration and 2FA setup flows",
+    "Unified Input Design: Email, username, name, and password all share the exact same rock-solid direct ADB input engine"
   ]
 }
