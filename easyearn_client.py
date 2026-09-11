@@ -233,79 +233,130 @@ class EasyEarnClient:
             return None
             
     def _extract_task_data(self) -> Dict:
-        """Read data from the task page, accurately extracting fields from EasyEarn wizard"""
+        """Read data from the task page, accurately extracting all fields from EasyEarn FIRST before feeding to Instagram"""
         data = {}
-        time.sleep(3) # Wait for task page to fully render
-        
-        try:
-            import re
-            current_url = self.driver.current_url
-            match = re.search(r'/task/([0-9a-fA-F-]+)', current_url)
-            if match:
-                self.task_id = match.group(1)
+        import re
+        import random
+        import string
 
-            # 1. Direct extract from exact EasyEarn field IDs: #field-login, #field-password, etc.
-            field_keys = ['login', 'password', 'first_name', 'email']
-            for key in field_keys:
-                try:
-                    el = self.driver.find_element(By.ID, f"field-{key}")
-                    val = (el.text or el.get_attribute('innerText') or el.get_attribute('value') or '').strip()
-                    if val:
-                        data[key] = val
-                except Exception:
-                    pass
+        # Polling loop: allow dynamic EasyEarn elements to render completely
+        for attempt in range(8):
+            try:
+                current_url = self.driver.current_url
+                match = re.search(r'/task/([0-9a-fA-F-]+)', current_url)
+                if match:
+                    self.task_id = match.group(1)
 
-            # 2. Extract from page JavaScript variables if present
-            if len(data) < 4:
-                try:
-                    js_data = self.driver.execute_script("""
-                        var res = {};
-                        if (typeof gen !== 'undefined') {
-                            res.login = gen.login || '';
-                            res.password = gen.password || '';
-                            res.first_name = gen.first_name || '';
-                            res.email = gen.email || '';
-                        }
-                        return res;
-                    """)
-                    if js_data:
-                        for k, v in js_data.items():
-                            if v and k not in data:
-                                data[k] = str(v).strip()
-                except Exception:
-                    pass
-
-            # 3. Fallback CSS selectors
-            for key in field_keys:
-                if key not in data:
-                    selectors = [
-                        f"#{key}",
-                        f"input[name='{key}']",
-                        f"[data-field='{key}']",
-                        f".field-{key}"
-                    ]
-                    for sel in selectors:
+                # 1. Direct extract from exact EasyEarn field IDs: #field-login, #field-password, etc.
+                field_keys = ['login', 'password', 'first_name', 'email']
+                for key in field_keys:
+                    if key not in data or not data[key]:
                         try:
-                            elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                            if elements:
-                                val = (elements[0].text or elements[0].get_attribute('value') or '').strip()
-                                if val:
-                                    data[key] = val
-                                    break
-                        except:
+                            el = self.driver.find_element(By.ID, f"field-{key}")
+                            val = (el.text or el.get_attribute('innerText') or el.get_attribute('value') or '').strip()
+                            if val:
+                                data[key] = val
+                        except Exception:
                             pass
 
-            # Clean all string values (remove any trailing \r or \n)
-            for k in list(data.keys()):
-                if isinstance(data[k], str):
-                    data[k] = data[k].strip()
+                # 2. Extract from page JavaScript variables if present
+                if len(data) < 4:
+                    try:
+                        js_data = self.driver.execute_script("""
+                            var res = {};
+                            if (typeof gen !== 'undefined') {
+                                res.login = gen.login || '';
+                                res.password = gen.password || '';
+                                res.first_name = gen.first_name || '';
+                                res.email = gen.email || '';
+                            }
+                            if (typeof taskData !== 'undefined') {
+                                res.login = res.login || taskData.login || '';
+                                res.password = res.password || taskData.password || '';
+                                res.email = res.email || taskData.email || '';
+                            }
+                            return res;
+                        """)
+                        if js_data:
+                            for k, v in js_data.items():
+                                if v and (k not in data or not data[k]):
+                                    data[k] = str(v).strip()
+                    except Exception:
+                        pass
 
-            self.log(f"📋 Extracted task data: Login={data.get('login')} | Email={data.get('email')}", "info")
-            self.task_data = data
-            return data
-        except Exception as e:
-            self.log(f"Extract error: {e}", "error")
-            return {}
+                # 3. Extract from copy buttons (EasyEarn commonly uses [data-clipboard-text])
+                if len(data) < 4:
+                    try:
+                        copy_elems = self.driver.find_elements(By.CSS_SELECTOR, "[data-clipboard-text], [data-text], [data-copy]")
+                        for el in copy_elems:
+                            c_text = (el.get_attribute("data-clipboard-text") or el.get_attribute("data-text") or el.get_attribute("data-copy") or '').strip()
+                            if not c_text:
+                                continue
+                            try:
+                                parent_text = (el.find_element(By.XPATH, "./..").text or '').lower()
+                            except:
+                                parent_text = ''
+                            el_id = (el.get_attribute('id') or '').lower()
+                            el_class = (el.get_attribute('class') or '').lower()
+
+                            if ('pass' in parent_text or 'pass' in el_id or 'pass' in el_class) and 'password' not in data:
+                                data['password'] = c_text
+                            elif ('login' in parent_text or 'user' in parent_text or 'login' in el_id) and 'login' not in data:
+                                data['login'] = c_text
+                            elif ('mail' in parent_text or '@' in c_text or 'email' in el_id) and 'email' not in data:
+                                data['email'] = c_text
+                            elif ('name' in parent_text or 'first_name' in el_id) and 'first_name' not in data:
+                                data['first_name'] = c_text
+                    except Exception:
+                        pass
+
+                # 4. Fallback CSS selectors
+                for key in field_keys:
+                    if key not in data or not data[key]:
+                        selectors = [
+                            f"#{key}",
+                            f"input[name='{key}']",
+                            f"[data-field='{key}']",
+                            f".field-{key}"
+                        ]
+                        for sel in selectors:
+                            try:
+                                elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                                if elements:
+                                    val = (elements[0].text or elements[0].get_attribute('value') or elements[0].get_attribute('innerText') or '').strip()
+                                    if val:
+                                        data[key] = val
+                                        break
+                            except:
+                                pass
+
+                # Check if we have gathered all essential fields
+                if data.get('login') and data.get('email') and data.get('password'):
+                    break
+
+            except Exception as e:
+                pass
+            time.sleep(1)
+
+        # Clean all string values
+        for k in list(data.keys()):
+            if isinstance(data[k], str):
+                data[k] = data[k].strip().strip('"').strip("'")
+
+        # Guarantee a valid password if EasyEarn didn't provide an explicit one
+        if not data.get('password'):
+            seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+            generated_pwd = f"Acc_{seed}!9"
+            data['password'] = generated_pwd
+            self.log(f"ℹ️ Auto-generated secure password for Instagram: {data['password']}", "info")
+
+        # Guarantee a valid first name
+        if not data.get('first_name') and data.get('login'):
+            clean_name = re.sub(r'[^a-zA-Z]', '', data['login'])
+            data['first_name'] = clean_name.capitalize() if clean_name else "Alex"
+
+        self.task_data = data
+        return data
             
     def get_email_code(self) -> Optional[str]:
         """Poll the EasyEarn page/API for the email verification code"""

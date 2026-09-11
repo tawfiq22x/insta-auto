@@ -148,15 +148,13 @@ class LDPlayerAutomation:
         escaped_text = "".join(escaped_chars)
         self._run_adb(f'shell input text "{escaped_text}"')
 
-    def _clear_text_field(self, count: int = 35):
-        """Quickly clear existing text or suggestions in focused field"""
+    def _clear_text_field(self, count: int = 40):
+        """Cleanly clear existing text or suggestions in focused field without typing stray characters"""
         try:
-            # Move cursor to end, select all via Ctrl+A, then delete
+            # Move cursor to end of any existing text
             self._run_adb("shell input keyevent 123") # KEYCODE_MOVE_END
-            self._run_adb("shell input keyevent 29 --ctrl") # Select all
-            self._run_adb("shell input keyevent 67") # KEYCODE_DEL
-            # Safety backspaces
-            del_keys = " ".join(["67"] * min(count, 15))
+            # Send batch backspaces (KEYCODE_DEL = 67)
+            del_keys = " ".join(["67"] * min(count, 50))
             self._run_adb(f"shell input keyevent {del_keys}")
         except Exception:
             pass
@@ -339,11 +337,15 @@ class LDPlayerAutomation:
         """
         Specifically handles Instagram password entry:
         1. Accurately focuses password field via password="true", resource-id or hint
-        2. Clears previous text
-        3. Enters password via escaped ADB input text
-        4. Dismisses software keyboard so 'Next' button is immediately accessible
+        2. Clears previous text thoroughly without typing stray characters
+        3. Enters password via safely escaped ADB input text (never touches host clipboard)
+        4. Dismisses software keyboard so 'Next' button is immediately visible
         5. Does not stall on plaintext verification (since Android masks passwords)
         """
+        if not password:
+            print("⚠️ Warning: Empty password passed to enter_password!")
+            return False
+
         coords = self.find_edit_text_coordinates(hint_keywords=["password", "create a password", "choose a password"], is_password=True)
         if coords:
             cx, cy = coords
@@ -359,7 +361,8 @@ class LDPlayerAutomation:
         self._clear_text_field(40)
         time.sleep(0.15)
 
-        # Enter password via safely escaped text
+        # Enter password purely via escaped ADB input text
+        print(f"🔑 Typing password ({len(password)} characters)...")
         self._type_text(password)
         time.sleep(0.4)
 
@@ -369,9 +372,13 @@ class LDPlayerAutomation:
         return True
 
     def enter_text_to_field(self, text: str, hint_keywords=None, fallback_ratio=(0.50, 0.35), is_password: bool = False) -> bool:
-        """Find the real EditText field, tap it to focus, clear it, and type text with fast verification"""
+        """Find the real EditText field, tap it to focus, clear it, and type text safely via ADB"""
         if is_password:
             return self.enter_password(text, fallback_ratio=fallback_ratio)
+
+        if not text:
+            print("⚠️ Warning: Empty text passed to enter_text_to_field!")
+            return False
 
         coords = self.find_edit_text_coordinates(hint_keywords, is_password=is_password)
         if coords:
@@ -388,29 +395,14 @@ class LDPlayerAutomation:
         self._clear_text_field(40)
         time.sleep(0.15)
         
-        # Method 1: Type via ADB input text
+        # Type text purely via ADB input text
+        print(f"⌨️ Typing input text: {text}")
         self._type_text(text)
         time.sleep(0.4)
         
-        # Quick verify text was received
-        ui_after = self.dump_ui()
-        sample = text[:min(len(text), 5)].lower()
-        if sample in ui_after.lower():
-            return True
-            
-        # Method 2: If input text was not entered, tap again and paste via clipboard
-        if coords:
-            self._tap(coords[0], coords[1])
-            time.sleep(0.2)
-            
-        try:
-            self._run_adb(f'shell cmd clipboard set text "{text}"')
-            time.sleep(0.2)
-            self._run_adb("shell input keyevent 279") # KEYCODE_PASTE
-            time.sleep(0.3)
-        except Exception:
-            pass
-            
+        # Dismiss soft keyboard so action buttons below remain visible
+        self._run_adb("shell input keyevent 111") # KEYCODE_ESCAPE
+        time.sleep(0.2)
         return True
 
     def find_birthday_picker_info(self, xml_str: Optional[str] = None) -> Tuple[int, int, int, int]:

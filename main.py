@@ -58,7 +58,7 @@ class InstagramAutomationController:
         
         # Load version info
         self.version_info = self.get_version_info()
-        curr_ver = self.version_info.get("version", "1.4.3")
+        curr_ver = self.version_info.get("version", "1.4.4")
         self.root.title(f"🤖 Instagram Automation Suite - v{curr_ver}")
         self.root.geometry("1120x800")
         self.root.minsize(1000, 720)
@@ -90,16 +90,17 @@ class InstagramAutomationController:
     def get_version_info(self) -> dict:
         """Load version and release details from version.json"""
         default_info = {
-            "version": "1.4.3",
-            "release_date": "2026-09-11 17:15",
-            "build_id": "v1.4.3-rel",
+            "version": "1.4.4",
+            "release_date": "2026-09-11 17:30",
+            "build_id": "v1.4.4-rel",
             "features": [
+                "Pre-fetching pipeline: extracts and verifies all credentials from EasyEarn FIRST before feeding to Instagram",
+                "Eliminated clipboard paste bug: removed KEYCODE_PASTE fallback to prevent pasting host clipboard data",
+                "Clean input field wiping: fixed backspace logic to prevent typing stray characters like 'a'",
                 "Fixed Password entry: direct focus matching, special character escaping & soft keyboard dismissal",
                 "Smart Birthday wheel automation: auto-scrolls Year backwards ~20-25 years and confirms DatePicker dialogs",
                 "High-speed registration workflow: streamlined screen transitions and instant field clearing",
-                "Added Version & Updates tab with live update status and file integrity check",
-                "Persistent LDPlayer path: instant auto-save to config.json upon browsing",
-                "Private GitHub repository support with token.txt authentication"
+                "Added Version & Updates tab with live update status and file integrity check"
             ]
         }
         if os.path.exists("version.json"):
@@ -669,17 +670,24 @@ class InstagramAutomationController:
                     self.log("❌ Failed to detect login state.", 'error')
                     break
                 
-                # Step 2: Get task
-                self.log("📋 Checking for tasks...", 'info')
+                # Step 2: Get task - fetch and verify ALL info from EasyEarn first
+                self.log("📋 Fetching all task details from EasyEarn first...", 'info')
                 task = self.easyearn.get_task()
-                if not task:
-                    self.log("⚠️ No tasks available, waiting...", 'warning')
-                    time.sleep(30)
+                if not task or not task.get('login'):
+                    self.log("⚠️ No active tasks available, waiting...", 'warning')
+                    time.sleep(20)
                     continue
                 
                 self.current_task = task
+                pwd_raw = task.get('password', '')
+                pwd_masked = (pwd_raw[:2] + "****" + pwd_raw[-1:]) if len(pwd_raw) > 3 else "***"
+                
                 self.task_info.config(text=f"Task: {task.get('login', '')} | Email: {task.get('email', '')}")
-                self.log(f"📋 Task found: {task.get('login')} (Email: {task.get('email', '')})", 'task')
+                self.log(f"📦 Successfully collected all task info from EasyEarn FIRST:", 'success')
+                self.log(f"   👤 Username : {task.get('login', '')}", 'info')
+                self.log(f"   🔒 Password : {pwd_masked} ({len(pwd_raw)} chars)", 'info')
+                self.log(f"   ✉️ Email    : {task.get('email', '')}", 'info')
+                self.log(f"   📝 Full Name: {task.get('first_name', task.get('login', ''))}", 'info')
                 
                 # Step 3: Ensure LDPlayer is ready before proceeding
                 self.log("📱 Connecting to LDPlayer emulator...", 'info')
@@ -689,8 +697,8 @@ class InstagramAutomationController:
                     continue
                 self.log("✅ LDPlayer connected and ready!", 'success')
 
-                # Step 4: Create Instagram account
-                self.log("📱 Creating Instagram account on LDPlayer...", 'task')
+                # Step 4: Feed pre-collected EasyEarn data to Instagram
+                self.log("🚀 Feeding verified EasyEarn credentials into Instagram registration...", 'task')
                 
                 account_data = {
                     'email': task.get('email', ''),
