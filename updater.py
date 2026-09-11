@@ -59,26 +59,32 @@ def update_from_github(repo_url: str) -> bool:
     for filename in FILES_TO_UPDATE:
         downloaded = False
         for branch in branches:
-            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filename}"
-            try:
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                if token:
-                    headers['Authorization'] = f"token {token}"
-                req = urllib.request.Request(raw_url, headers=headers)
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    content = response.read()
-                    with open(filename, 'wb') as f:
-                        f.write(content)
-                    print(f"  ✅ Updated: {filename}")
-                    downloaded = True
-                    updated_count += 1
-                    break
-            except urllib.error.HTTPError as he:
-                if he.code in (401, 404) and not token:
-                    pass
-                continue
-            except Exception:
-                continue
+            urls_to_try = [
+                f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filename}",
+                f"https://api.github.com/repos/{owner}/{repo}/contents/{filename}?ref={branch}"
+            ]
+            for url in urls_to_try:
+                try:
+                    headers = {'User-Agent': 'Mozilla/5.0'}
+                    if token:
+                        if "api.github.com" in url:
+                            headers['Authorization'] = f"Bearer {token}"
+                            headers['Accept'] = 'application/vnd.github.v3.raw'
+                        else:
+                            headers['Authorization'] = f"token {token}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        content = response.read()
+                        with open(filename, 'wb') as f:
+                            f.write(content)
+                        print(f"  ✅ Updated: {filename}")
+                        downloaded = True
+                        updated_count += 1
+                        break
+                except Exception:
+                    continue
+            if downloaded:
+                break
                 
         if not downloaded:
             print(f"  ⚠️ Skipped / not found: {filename}")
