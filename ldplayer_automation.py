@@ -1,3 +1,24 @@
+import os
+import subprocess
+if not hasattr(subprocess, '_run_patched'):
+    _original_run = subprocess.run
+    def _wrapped_run(*args, **kwargs):
+        if os.name == 'nt':
+            kwargs['creationflags'] = 0x08000000
+        return _original_run(*args, **kwargs)
+    subprocess.run = _wrapped_run
+    
+    _original_popen = subprocess.Popen
+    class _WrappedPopen(_original_popen):
+        def __init__(self, *args, **kwargs):
+            if os.name == 'nt':
+                kwargs['creationflags'] = kwargs.get('creationflags', 0) | 0x08000000
+            super().__init__(*args, **kwargs)
+    subprocess.Popen = _WrappedPopen
+    
+    subprocess._run_patched = True
+
+
 # ldplayer_automation.py
 import subprocess
 import time
@@ -347,12 +368,17 @@ class LDPlayerAutomation:
                 pattern = rf'(?:text|content-desc)="{re.escape(kw)}"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
             else:
                 pattern = rf'(?:text|content-desc)="[^"]*{re.escape(kw)}[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
-            match = re.search(pattern, xml_str, re.IGNORECASE)
-            if match:
+            matches = re.finditer(pattern, xml_str, re.IGNORECASE)
+            valid_matches = []
+            for match in matches:
                 x1, y1, x2, y2 = map(int, match.groups())
                 cy = (y1 + y2) // 2
-                if cy >= min_y and (max_y is None or cy <= max_y):
-                    return ((x1 + x2) // 2, cy)
+                area = (x2 - x1) * (y2 - y1)
+                if cy >= min_y and (max_y is None or cy <= max_y) and area > 0:
+                    valid_matches.append(((x1 + x2) // 2, cy, area))
+            if valid_matches:
+                valid_matches.sort(key=lambda x: x[2])
+                return (valid_matches[0][0], valid_matches[0][1])
 
         return None
 
@@ -1214,13 +1240,18 @@ class LDPlayerAutomation:
             # 2. Tap 'Get started' or 'Create new account' if present on welcome screen
             if "create new account" in ui_check or "get started" in ui_check or "create account" in ui_check or "sign up with email or phone" in ui_check:
                 log("👉 [Step 1/11] Tapping 'Create new account' / 'Get started'...", "info")
-                self.tap_text(
+                found = self.tap_text(
                     ["Create new account", "Create account", "Get started", "Sign up with email or phone number", "Sign up"],
                     timeout=2.0,
-                    fallback_ratio=(0.50, 0.85),
+                    fallback_ratio=None,
                     xml_str=ui_check
                 )
-                if not self.sleep(1.0):
+                if not found:
+                    w, h = self.get_screen_size()
+                    self._tap(int(w * 0.50), int(h * 0.85))
+                    self._tap(int(w * 0.50), int(h * 0.90))
+                    self._tap(int(w * 0.50), int(h * 0.75))
+                if not self.sleep(1.5):
                     return {'success': False, 'error': 'Stopped by user', 'stopped': True}
 
             # 3. Step-by-Step Registration Loop (11-Step Instagram Registration Flow)
@@ -1252,16 +1283,27 @@ class LDPlayerAutomation:
 
                 # Step 1 Recovery: If screen is still on Welcome Screen
                 if not (email_entered or code_entered or password_entered or birthday_set or terms_agreed) and (
-                    "create new account" in ui or "get started" in ui or "already have an account" in ui
+                    "create new account" in ui or "get started" in ui or "already have an account" in ui or "create account" in ui
                 ):
-                    log("👉 [Step 1/11] Welcome screen detected! Tapping 'Create new account'...", "info")
-                    self.tap_text(
-                        ["Create new account", "Create account", "Get started", "Sign up with email or phone number", "Sign up"],
+                    log("👉 [Step 1/11] Welcome screen detected! Tapping 'Create new account' / 'Get started'...", "info")
+                    found = self.tap_text(
+                        ["Create new account", "Create account", "Get started", "Sign up with email or phone number", "Sign up", "GET STARTED"],
                         timeout=1.5,
-                        fallback_ratio=(0.50, 0.85),
+                        fallback_ratio=None,
                         xml_str=ui
                     )
-                    if not self.sleep(1.0):
+                    if not found:
+                        log("⚠️ Text not found! Using aggressive fallback taps...", "warning")
+                        w, h = self.get_screen_size()
+                        self._tap(int(w * 0.50), int(h * 0.85))
+                        time.sleep(0.3)
+                        self._tap(int(w * 0.50), int(h * 0.90))
+                        time.sleep(0.3)
+                        self._tap(int(w * 0.50), int(h * 0.75))
+                        time.sleep(0.3)
+                        self._tap(int(w * 0.50), int(h * 0.80))
+                    
+                    if not self.sleep(1.5):
                         return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 

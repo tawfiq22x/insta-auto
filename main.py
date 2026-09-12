@@ -1,6 +1,27 @@
 # main.py
 import os
 import sys
+import os
+import subprocess
+if not hasattr(subprocess, '_run_patched'):
+    _original_run = subprocess.run
+    def _wrapped_run(*args, **kwargs):
+        if os.name == 'nt':
+            kwargs['creationflags'] = 0x08000000
+        return _original_run(*args, **kwargs)
+    subprocess.run = _wrapped_run
+    
+    _original_popen = subprocess.Popen
+    class _WrappedPopen(_original_popen):
+        def __init__(self, *args, **kwargs):
+            if os.name == 'nt':
+                kwargs['creationflags'] = kwargs.get('creationflags', 0) | 0x08000000
+            super().__init__(*args, **kwargs)
+    subprocess.Popen = _WrappedPopen
+    
+    subprocess._run_patched = True
+
+
 import json
 import time
 import threading

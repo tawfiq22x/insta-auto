@@ -1,10 +1,11 @@
 {
-  "version": "1.7.1",
-  "release_date": "2026-09-12 13:21",
-  "build_id": "v1.7.1-rel",
+  "version": "1.7.4",
+  "release_date": "2026-09-12 14:00",
+  "build_id": "v1.7.4-rel",
   "features": [
-    "Hotfix: Restored missing create_instagram_account method in ldplayer_automation.py that caused a CRITICAL ERROR",
-    "Aggressive Birthday Scroll: Completely replaced the complex set_birthday automation with highly efficient logic that forcefully swipes down on the right side of the screen 6 times to rapidly spin the year wheel backward.",
-    "Robust DOM Field Extraction: The EasyEarn extraction logic now aggressively scrapes the DOM for Login, Password, First Name, Email, and Birthday fields."
+    "Silent Execution Mode: Completely suppressed all ADB and sub-process command windows from popping up and flashing on the screen during automation.",
+    "Hotfix: Fixed 'Get Started' loop block by properly sorting XML bounds by area to click the exact button instead of the parent background layout.",
+    "Added multiple aggressive fallback taps for 'Create new account' to cover varying Instagram A/B test layouts.",
+    "Aggressive Birthday Scroll: Completely replaced the complex set_birthday automation with highly efficient logic that forcefully swipes down on the right side of the screen 6 times to rapidly spin the year wheel backward."
   ]
 }
