@@ -21,6 +21,24 @@ class EasyEarnClient:
         self.task_id = None
         self.task_data = None
         self.log_callback = log_callback
+        self.stop_requested = False
+
+    def request_stop(self):
+        """Immediately signal the EasyEarn client to halt operations"""
+        self.stop_requested = True
+
+    def reset_stop(self):
+        """Reset stop state before a new run"""
+        self.stop_requested = False
+
+    def sleep(self, seconds: float) -> bool:
+        """Interruptible sleep that stops instantly when stop_requested is True"""
+        end_time = time.time() + seconds
+        while time.time() < end_time:
+            if self.stop_requested:
+                return False
+            time.sleep(min(0.05, max(0.005, end_time - time.time())))
+        return not self.stop_requested
 
     def log(self, message: str, level: str = 'info'):
         """Send logs to both console and UI callback"""
@@ -113,6 +131,9 @@ class EasyEarnClient:
                 
     def wait_for_login(self) -> bool:
         """Wait for the user to pass Cloudflare and be logged in"""
+        if self.stop_requested:
+            return False
+
         if self.logged_in and self.driver:
             try:
                 _ = self.driver.current_url
@@ -135,12 +156,17 @@ class EasyEarnClient:
                     self.driver.get(f"{self.base_url}/dashboard")
             except Exception:
                 self.driver.get(f"{self.base_url}/dashboard")
-            time.sleep(3)
+            if not self.sleep(3):
+                return False
             
             self.log("👉 Please complete Cloudflare verification and log in if prompted in the browser.", "warning")
             self.log("⏳ Bot is waiting for dashboard to load (up to 10 minutes)...", "info")
             
             for check_i in range(120): # 120 * 5s = 600s
+                if self.stop_requested:
+                    self.log("⏹️ Stop requested while waiting for login.", "warning")
+                    return False
+
                 if not self.driver:
                     self.log("❌ Browser was closed.", "error")
                     return False
@@ -153,7 +179,8 @@ class EasyEarnClient:
                         return True
                 except Exception as e:
                     pass
-                time.sleep(5)
+                if not self.sleep(5):
+                    return False
                 
             self.log("❌ Login timed out after 10 minutes.", "error")
             return False
@@ -163,7 +190,7 @@ class EasyEarnClient:
             
     def get_task(self) -> Optional[Dict]:
         """Navigate to tasks page and visually click a task"""
-        if not self.logged_in: 
+        if self.stop_requested or not self.logged_in: 
             return None
             
         try:
@@ -365,7 +392,7 @@ class EasyEarnClient:
             
     def get_email_code(self) -> Optional[str]:
         """Poll the EasyEarn page/API for the email verification code"""
-        if not self.driver:
+        if self.stop_requested or not self.driver:
             return None
             
         try:
@@ -439,13 +466,19 @@ class EasyEarnClient:
             
     def submit_2fa_key(self, twofa_key: str) -> Optional[str]:
         """Submit the 2FA key into EasyEarn wizard Step 2 and return the generated OTP code"""
+        if self.stop_requested:
+            return None
         try:
             if not self.driver:
                 self.log("🌐 Browser not connected. Starting browser for 2FA...", "info")
                 self.start_browser()
                 if self.task_id:
                     self.driver.get(f"{self.base_url}/task/{self.task_id}")
-                    time.sleep(3)
+                    if not self.sleep(3):
+                        return None
+
+            if self.stop_requested:
+                return None
 
             twofa_clean = twofa_key.strip().replace(" ", "")
             self.log(f"🔐 Submitting 2FA Secret to EasyEarn: {twofa_clean}", "info")
@@ -479,18 +512,22 @@ class EasyEarnClient:
             return true;
             """
             self.driver.execute_script(script)
-            time.sleep(2)
+            if not self.sleep(2):
+                return None
             
             # Poll for OTP code generated in #otpValue
             otp_val = ""
             for _ in range(8):
+                if self.stop_requested:
+                    return None
                 otp_val = self.driver.execute_script("""
                 var el = document.getElementById('otpValue');
                 return el ? (el.innerText || el.textContent || '').trim() : '';
                 """)
                 if otp_val and len(otp_val) == 6:
                     break
-                time.sleep(1)
+                if not self.sleep(1):
+                    return None
 
             if otp_val:
                 self.log(f"✅ EasyEarn generated 6-digit OTP code: {otp_val}", "success")
@@ -504,6 +541,8 @@ class EasyEarnClient:
             
     def submit_report(self) -> bool:
         """Submit the final report to complete the task using EasyEarn's buildAndSubmitReport"""
+        if self.stop_requested:
+            return False
         try:
             self.log("📤 Submitting task completion report to EasyEarn...", "info")
             script = """

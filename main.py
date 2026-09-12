@@ -856,6 +856,10 @@ class InstagramAutomationController:
     def start_automation(self):
         """Start the automation process"""
         self.is_running = True
+        if hasattr(self, 'ldplayer'):
+            self.ldplayer.reset_stop()
+        if hasattr(self, 'easyearn'):
+            self.easyearn.reset_stop()
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         self.status_var.set("Running...")
@@ -866,6 +870,19 @@ class InstagramAutomationController:
         thread.start()
         
         self.log("🚀 Automation started!", 'success')
+
+    def interruptible_sleep(self, seconds: float) -> bool:
+        """Sleep in tiny 50ms chunks while checking stop flags"""
+        end_time = time.time() + seconds
+        while time.time() < end_time:
+            if not self.is_running:
+                return False
+            if hasattr(self, 'ldplayer') and self.ldplayer.stop_requested:
+                return False
+            if hasattr(self, 'easyearn') and getattr(self.easyearn, 'stop_requested', False):
+                return False
+            time.sleep(min(0.05, max(0.005, end_time - time.time())))
+        return self.is_running
     
     def run_automation_loop(self):
         """Main automation loop"""
@@ -886,7 +903,7 @@ class InstagramAutomationController:
                 # Step 1: Wait for login
                 self.log("🌐 Opening browser. Please log in manually if prompted...", 'info')
                 if not self.easyearn.wait_for_login():
-                    self.log("❌ Failed to detect login state.", 'error')
+                    self.log("❌ Failed to detect login state or stop requested.", 'error')
                     break
                 
                 # Step 2: Get task - fetch and verify ALL info from EasyEarn first
@@ -894,7 +911,8 @@ class InstagramAutomationController:
                 task = self.easyearn.get_task()
                 if not task or not task.get('login'):
                     self.log("⚠️ No active tasks available, waiting...", 'warning')
-                    time.sleep(20)
+                    if not self.interruptible_sleep(20):
+                        break
                     continue
                 
                 self.current_task = task
@@ -939,7 +957,8 @@ class InstagramAutomationController:
                 self.log("📱 Connecting to LDPlayer emulator...", 'info')
                 if not self.ldplayer.ensure_device_connected():
                     self.log(f"❌ Could not connect to LDPlayer at {self.ldplayer.ldplayer_path}. Please make sure LDPlayer is open!", 'error')
-                    time.sleep(10)
+                    if not self.interruptible_sleep(10):
+                        break
                     continue
                 self.log("✅ LDPlayer connected and ready!", 'success')
 
@@ -986,6 +1005,10 @@ class InstagramAutomationController:
                     log_cb=task_log_cb
                 )
                 
+                if not self.is_running or self.ldplayer.stop_requested:
+                    self.log("⏹️ Automation halted during account creation cycle.", 'warning')
+                    break
+
                 if result['success']:
                     self.accounts_created += 1
                     self.update_stats('accounts_created', self.accounts_created)
@@ -1016,7 +1039,8 @@ class InstagramAutomationController:
                 
                 # Clean up and wait
                 self.log("🔄 Cycle complete, waiting for next task...", 'info')
-                time.sleep(5)
+                if not self.interruptible_sleep(5):
+                    break
                 
         except Exception as e:
             import traceback
@@ -1026,12 +1050,23 @@ class InstagramAutomationController:
             self.stop_automation()
     
     def stop_automation(self):
-        """Stop the automation loop"""
+        """Immediately stop the automation loop and all emulator/browser actions"""
         self.is_running = False
+        if hasattr(self, 'ldplayer'):
+            self.ldplayer.request_stop()
+            # Force kill instagram on device in background thread to unblock immediately
+            threading.Thread(target=self.ldplayer.force_stop_instagram, daemon=True).start()
+        if hasattr(self, 'easyearn'):
+            self.easyearn.request_stop()
+            
+        if hasattr(self, 'current_task_state') and isinstance(self.current_task_state, dict):
+            self.current_task_state['step'] = '⏹️ Automation Stopped by User'
+            self.update_current_task_ui(**self.current_task_state)
+
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.status_var.set("Stopped")
-        self.log("⏹️ Automation stopped.", 'warning')
+        self.log("⏹️ Automation stopped immediately.", 'warning')
     
     def on_closing(self):
         """Cleanly handle application window exit and guarantee config is saved"""

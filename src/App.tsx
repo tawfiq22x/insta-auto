@@ -251,7 +251,10 @@ export default function App() {
       addLog('🚀 Starting automation loop...', 'info');
     } else {
       setIsRunning(false);
+      runningRef.current = false;
       addLog('🛑 Stopping automation loop...', 'warning');
+      addLog('⏹️ Automation stopped immediately.', 'warning');
+      setCurrentTask(t => t ? ({ ...t, step: '⏹️ Stopped by User' }) : null);
     }
   };
 
@@ -267,7 +270,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Instagram Automation Suite</h1>
-              <p className="text-sm text-slate-400">v1.5.7 • Full Credential Visibility • Zero Local Storage</p>
+              <p className="text-sm text-slate-400">v1.6.0 • Full Credential Visibility • Zero Local Storage</p>
             </div>
           </div>
           <div className="flex items-center gap-3">

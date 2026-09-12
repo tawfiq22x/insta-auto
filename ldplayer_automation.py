@@ -14,7 +14,46 @@ class LDPlayerAutomation:
         self.instance_name = "LDPlayer"
         self.instance_index = "0"
         self.adb_path = "adb"
+        self.stop_requested = False
         
+    def request_stop(self, stop_app: bool = True):
+        """Immediately signals the automation to abort and optionally terminates Instagram on emulator"""
+        self.stop_requested = True
+        if stop_app:
+            self.force_stop_instagram()
+
+    def reset_stop(self):
+        """Clears the stop requested flag before starting a new run"""
+        self.stop_requested = False
+
+    def is_stopped(self) -> bool:
+        """Check if a stop has been requested"""
+        return bool(self.stop_requested)
+
+    def sleep(self, seconds: float) -> bool:
+        """
+        Interruptible sleep that exits immediately (within 50ms) if a stop is requested.
+        Returns True if the sleep completed fully, False if aborted by stop request.
+        """
+        end_time = time.time() + seconds
+        while time.time() < end_time:
+            if self.stop_requested:
+                return False
+            time.sleep(min(0.05, max(0.005, end_time - time.time())))
+        return not self.stop_requested
+
+    def force_stop_instagram(self):
+        """Force stops Instagram and Instagram Lite on emulator immediately"""
+        try:
+            device_serial = self._get_active_device_serial()
+            adb_exe = self._get_adb_path().strip('"')
+            target = ["-s", device_serial] if device_serial else []
+            subprocess.run([adb_exe] + target + ["shell", "am", "force-stop", "com.instagram.android"], shell=False, capture_output=True, timeout=5)
+            subprocess.run([adb_exe] + target + ["shell", "am", "force-stop", "com.instagram.lite"], shell=False, capture_output=True, timeout=5)
+            print("⏹️ Force-stopped Instagram on LDPlayer emulator.")
+        except Exception as e:
+            print(f"Force stop Instagram error: {e}")
+
     def _get_adb_path(self) -> str:
         """Returns the path to adb.exe. Tries LDPlayer folder first, then system path."""
         try:
@@ -34,7 +73,7 @@ class LDPlayerAutomation:
         """Find the active LDPlayer device serial from adb devices"""
         try:
             adb_exe = self._get_adb_path()
-            res = subprocess.run(f"{adb_exe} devices", shell=True, capture_output=True, text=True)
+            res = subprocess.run(f"{adb_exe} devices", shell=True, capture_output=True, text=True, timeout=10)
             lines = res.stdout.strip().split('\n')[1:]
             for line in lines:
                 parts = line.split()
@@ -51,6 +90,8 @@ class LDPlayerAutomation:
 
     def _run_adb(self, command: str) -> str:
         """Run an ADB command targeting the specific LDPlayer instance"""
+        if self.stop_requested and "force-stop" not in command and "devices" not in command:
+            return ""
         try:
             device_serial = self._get_active_device_serial()
             device_target = f"-s {device_serial}" if device_serial else ""
@@ -61,7 +102,8 @@ class LDPlayerAutomation:
                 full_cmd, 
                 shell=True, 
                 capture_output=True, 
-                text=True
+                text=True,
+                timeout=12
             )
             return result.stdout.strip()
         except Exception as e:
@@ -70,6 +112,8 @@ class LDPlayerAutomation:
 
     def _run_adb_args(self, args: list) -> str:
         """Run an ADB command using argument list (shell=False) to avoid Windows cmd.exe escaping issues"""
+        if self.stop_requested and "force-stop" not in args:
+            return ""
         try:
             device_serial = self._get_active_device_serial()
             adb_exe = self._get_adb_path().strip('"')
@@ -81,7 +125,8 @@ class LDPlayerAutomation:
                 cmd_list, 
                 shell=False, 
                 capture_output=True, 
-                text=True
+                text=True,
+                timeout=12
             )
             return result.stdout.strip()
         except Exception as e:
@@ -628,6 +673,9 @@ class LDPlayerAutomation:
         7. Handles Instagram age confirmation dialog ('Are you X years old?' / 'Confirm your age').
         8. Dismisses under-age error dialogs if encountered and retries.
         """
+        if self.stop_requested:
+            return False
+
         def log(msg, level="info"):
             if log_cb:
                 try:
@@ -955,6 +1003,9 @@ class LDPlayerAutomation:
         9. Type 6-digit OTP code into Instagram -> Tap 'Next' to finish
         Returns the genuine 2FA Secret Key string.
         """
+        if self.stop_requested:
+            return ""
+
         def log(msg, level="info"):
             print(f"[{level.upper()}] {msg}")
             if log_cb:
@@ -966,29 +1017,45 @@ class LDPlayerAutomation:
         log("🔐 Setting up real Two-Factor Authentication on Instagram...", "task")
         
         # Step 1: Ensure any initial dialogs/popups are dismissed and navigate to Profile
-        time.sleep(1.0)
+        if not self.sleep(1.0):
+            return ""
         for _ in range(3):
+            if self.stop_requested:
+                return ""
             ui = self.dump_ui().lower()
             if "not now" in ui or "skip" in ui:
                 self.tap_text(["Not now", "Skip"], timeout=1.2, xml_str=ui)
-                time.sleep(0.5)
+                if not self.sleep(0.5):
+                    return ""
             else:
                 break
                 
+        if self.stop_requested:
+            return ""
+
         # Tap Profile tab (bottom right of screen: ~90% x, 95% y)
         log("👤 Navigating to Profile tab...", "info")
         self.tap_text(["Profile", "Edit profile"], timeout=2.0, fallback_ratio=(0.90, 0.95))
-        time.sleep(0.8)
+        if not self.sleep(0.8):
+            return ""
         
+        if self.stop_requested:
+            return ""
+
         # Step 2: Tap Hamburger Menu (top right: ~92% x, 5% y)
         log("🍔 Opening Settings Menu (three bars)...", "info")
         self.tap_text(["Options", "Menu", "More options"], timeout=2.0, fallback_ratio=(0.92, 0.05))
-        time.sleep(0.8)
+        if not self.sleep(0.8):
+            return ""
         
+        if self.stop_requested:
+            return ""
+
         # Step 3: Tap 'Settings and privacy' or 'Accounts Center'
         log("⚙️ Opening Accounts Center / Settings...", "info")
         self.tap_text(["Accounts Center", "Account Centre", "Settings and privacy", "Settings"], timeout=2.0, fallback_ratio=(0.50, 0.12))
-        time.sleep(0.8)
+        if not self.sleep(0.8):
+            return ""
         
         # In case we landed on Settings list and Accounts Center is at the top card
         ui = self.dump_ui().lower()
@@ -1085,6 +1152,9 @@ class LDPlayerAutomation:
         The master workflow for creating an Instagram account via LDPlayer.
         Dynamically adapts to any screen resolution and modern Instagram UI.
         """
+        if self.stop_requested:
+            return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
         def log(msg, level="info"):
             print(f"[{level.upper()}] {msg}")
             if log_cb:
@@ -1104,20 +1174,31 @@ class LDPlayerAutomation:
 
             # 1. Check if Instagram is already open on welcome screen or launch it
             ui_check = self.dump_ui().lower()
+            if self.stop_requested:
+                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
             if "get started" not in ui_check and "create new account" not in ui_check and "create account" not in ui_check:
                 log("🚀 Opening Instagram app...", "info")
                 self.launch_instagram()
-                time.sleep(3.5)
+                if not self.sleep(3.5):
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                 ui_check = self.dump_ui().lower()
             else:
                 log("Instagram is already open!", "info")
+
+            if self.stop_requested:
+                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
 
             # Dismiss Google Smart Lock / Autofill popup if present
             if "none of the above" in ui_check or ("smart lock" in ui_check and "google" in ui_check):
                 log("Dismissing Google Smart Lock popup...", "info")
                 self.tap_text(["None of the above", "Cancel", "Not now"], timeout=1.0)
-                time.sleep(0.5)
+                if not self.sleep(0.5):
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                 ui_check = self.dump_ui().lower()
+
+            if self.stop_requested:
+                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
 
             # 2. Tap 'Get started' or 'Create new account' if present on welcome screen
             if "create new account" in ui_check or "get started" in ui_check or "create account" in ui_check or "sign up with email or phone" in ui_check:
@@ -1128,7 +1209,8 @@ class LDPlayerAutomation:
                     fallback_ratio=(0.50, 0.85),
                     xml_str=ui_check
                 )
-                time.sleep(1.0)
+                if not self.sleep(1.0):
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
 
             # 3. Step-by-Step Registration Loop (11-Step Instagram Registration Flow)
             email_entered = False
@@ -1143,13 +1225,18 @@ class LDPlayerAutomation:
             registration_completed = False
 
             for step_round in range(1, 50):
+                if self.stop_requested:
+                    log("⏹️ Stop requested. Halting registration immediately.", "warning")
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
                 ui = self.dump_ui().lower()
 
                 # Dismiss Google Smart Lock / Autofill popup
                 if "none of the above" in ui or ("choose an account" in ui and "google" in ui):
                     log("Dismissing Google Autofill / Smart Lock...", "info")
                     self.tap_text(["None of the above", "Cancel", "Not now"], timeout=1.0)
-                    time.sleep(0.5)
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 1 Recovery: If screen is still on Welcome Screen
@@ -1163,7 +1250,8 @@ class LDPlayerAutomation:
                         fallback_ratio=(0.50, 0.85),
                         xml_str=ui
                     )
-                    time.sleep(1.0)
+                    if not self.sleep(1.0):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 2a: Contact Method - Phone screen detected -> Switch to Email
@@ -1182,7 +1270,8 @@ class LDPlayerAutomation:
                         fallback_ratio=(0.50, 0.88),
                         xml_str=ui
                     )
-                    time.sleep(0.8)
+                    if not self.sleep(0.8):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 2b: Contact Method - Email Entry screen detected
@@ -1198,7 +1287,8 @@ class LDPlayerAutomation:
                     self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email", "email address"], fallback_ratio=(0.50, 0.35))
                     log("👉 [Step 2/11] Tapping 'Next' to dispatch confirmation code...", "info")
                     self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.45))
-                    time.sleep(1.2)
+                    if not self.sleep(1.2):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     
                     # Verify if screen advanced to confirmation code or password
                     check_post_email = self.dump_ui().lower()
@@ -1218,18 +1308,27 @@ class LDPlayerAutomation:
                     if not received_code and otp_fetcher:
                         # Poll EasyEarn for the code for up to 90 seconds
                         for poll_attempt in range(20):
+                            if self.stop_requested:
+                                log("⏹️ Stop requested. Halting OTP code wait immediately.", "warning")
+                                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                             log(f"⏳ [Step 3/11] Waiting for OTP code from EasyEarn (attempt {poll_attempt+1}/20)...", "info")
                             received_code = otp_fetcher()
                             if received_code:
                                 break
-                            time.sleep(3)
+                            if not self.sleep(3):
+                                log("⏹️ Stop requested. Aborting OTP code wait.", "warning")
+                                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+                    if self.stop_requested:
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
 
                     if received_code:
                         log(f"🔑 [Step 3/11] OTP Code received: {received_code}! Entering into Instagram...", "success")
                         self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35))
                         self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45))
                         code_entered = True
-                        time.sleep(1.2)
+                        if not self.sleep(1.2):
+                            return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                         continue
                     else:
                         log("⚠️ [Step 3/11] Did not receive OTP code in time. Will retry on next cycle.", "warning")
@@ -1255,7 +1354,8 @@ class LDPlayerAutomation:
                     log("👉 [Step 4/11] Submitting password via 'Next' and enter key...", "info")
                     self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.52))
                     self._run_adb_args(["shell", "input", "keyevent", "66"])
-                    time.sleep(1.2)
+                    if not self.sleep(1.2):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     
                     # Verify if screen transitioned away from password
                     check_post_pwd = self.dump_ui().lower()
@@ -1280,7 +1380,8 @@ class LDPlayerAutomation:
                 if on_save_login_screen:
                     log("💾 [Step 4b/11] Save Login Info detected. Tapping 'Save'...", "info")
                     self.tap_text(["Save", "Save info", "Not now"], timeout=1.2, fallback_ratio=(0.50, 0.48))
-                    time.sleep(0.8)
+                    if not self.sleep(0.8):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 5: Birthday Step ("What's your birthday?" / "Date of birth")
@@ -1296,7 +1397,8 @@ class LDPlayerAutomation:
                     log("🎂 [Step 5/11] Birthday screen detected! Setting adult age (rolling wheel back to 1999)...", "info")
                     if self.set_birthday(log_cb=log, account_data=account_data):
                         birthday_set = True
-                    time.sleep(1.0)
+                    if not self.sleep(1.0):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 6: Username Step ("Create a username")
@@ -1310,7 +1412,8 @@ class LDPlayerAutomation:
                     self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.52))
                     self._run_adb_args(["shell", "input", "keyevent", "66"])
                     username_entered = True
-                    time.sleep(0.8)
+                    if not self.sleep(0.8):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Optional Name step if presented in this variant ("What's your name?" / "Full name")
@@ -1319,7 +1422,8 @@ class LDPlayerAutomation:
                     self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35))
                     self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45))
                     name_entered = True
-                    time.sleep(0.4)
+                    if not self.sleep(0.4):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 7: Agree to Terms and Policies ("I agree" / "Sign up")
@@ -1327,7 +1431,8 @@ class LDPlayerAutomation:
                     log("📜 [Step 7/11] Tapping 'I agree' to Terms & Policies...", "info")
                     self.tap_text(["I agree", "Agree", "Sign up"], timeout=1.2, fallback_ratio=(0.50, 0.90))
                     terms_agreed = True
-                    time.sleep(3.5)
+                    if not self.sleep(3.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 8: Add Profile Picture (Skippable)
@@ -1335,7 +1440,8 @@ class LDPlayerAutomation:
                     log("⏭️ [Step 8/11] Add Profile Picture: Tapping 'Skip'...", "info")
                     self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
                     skippable_pass_count += 1
-                    time.sleep(0.5)
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 9: Find Friends from Contacts (Skippable)
@@ -1343,7 +1449,8 @@ class LDPlayerAutomation:
                     log("⏭️ [Step 9/11] Contacts Sync: Tapping 'Skip'...", "info")
                     self.tap_text(["Skip", "Not now", "Cancel", "Deny"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
                     skippable_pass_count += 1
-                    time.sleep(0.5)
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 10: Connect to Facebook (Skippable)
@@ -1351,7 +1458,8 @@ class LDPlayerAutomation:
                     log("⏭️ [Step 10/11] Connect to Facebook: Tapping 'Skip'...", "info")
                     self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
                     skippable_pass_count += 1
-                    time.sleep(0.5)
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Step 11: Discover Suggested Accounts (Final Screen - Bypass via Top Right Arrow/Next)
@@ -1362,7 +1470,8 @@ class LDPlayerAutomation:
                         # Tap top-right arrow button at ~92% width, ~6% height
                         self._tap(int(w * 0.92), int(h * 0.06))
                     skippable_pass_count += 1
-                    time.sleep(1.0)
+                    if not self.sleep(1.0):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Generic Onboarding Skip after terms agreed
@@ -1370,7 +1479,8 @@ class LDPlayerAutomation:
                     log("⏭️ Bypassing onboarding prompt ('Skip' / 'Not now')...", "info")
                     self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
                     skippable_pass_count += 1
-                    time.sleep(0.5)
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                     continue
 
                 # Final Home Feed Verification
@@ -1388,7 +1498,12 @@ class LDPlayerAutomation:
                     registration_completed = True
                     break
 
-                time.sleep(0.35)
+                if not self.sleep(0.35):
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+            if self.stop_requested:
+                log("⏹️ Stop requested. Halting registration immediately.", "warning")
+                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
 
             if not registration_completed:
                 stalled_screen = "Unknown screen"
@@ -1419,6 +1534,8 @@ class LDPlayerAutomation:
             # Step 4: Real Two-Factor Authentication (2FA) Setup
             twofa_key = ""
             if twofa_enabled:
+                if self.stop_requested:
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
                 twofa_key = self.setup_instagram_2fa(
                     easyearn_client=easyearn_client,
                     account_data=account_data,
