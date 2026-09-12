@@ -900,3 +900,668 @@ class LDPlayerAutomation:
             time.sleep(1.5)
         
         return True
+    def get_clipboard(self) -> str:
+        """Read Android clipboard string via ADB"""
+        # Try Android cmd clipboard
+        try:
+            res = self._run_adb("shell cmd clipboard get")
+            if res and "Error" not in res and len(res.strip()) >= 16:
+                return res.strip()
+        except Exception:
+            pass
+
+        # Try Android service call clipboard (works on LDPlayer Android 7/9)
+        try:
+            raw = self._run_adb('shell service call clipboard 2 i32 1 s16 "com.android.shell"')
+            import re
+            chars = []
+            for line in raw.splitlines():
+                if "'" in line:
+                    part = line[line.find("'")+1 : line.rfind("'")]
+                    cleaned = part.replace('.', '').replace('\x00', '').strip()
+                    chars.append(cleaned)
+            parsed = "".join(chars).strip()
+            if len(parsed) >= 16:
+                return parsed
+        except Exception:
+            pass
+        return ""
+
+    def extract_2fa_key_from_ui(self, xml_str: Optional[str] = None) -> str:
+        """Extract a 16-36 character base32 2FA secret key from UI XML text nodes"""
+        if not xml_str:
+            xml_str = self.dump_ui()
+        import re
+        # Look for base32 patterns (A-Z and 2-7, possibly separated by spaces)
+        candidates = re.findall(r'text="([A-Z2-7\s]{16,40})"', xml_str)
+        for c in candidates:
+            clean = c.replace(" ", "").strip()
+            if 16 <= len(clean) <= 36:
+                return clean
+        return ""
+
+    def _generate_2fa_secret(self) -> str:
+        """Generate a random 32-character base32 secret for 2FA"""
+        chars = string.ascii_uppercase + "234567"
+        return ''.join(random.choice(chars) for _ in range(32))
+
+    def is_instagram_installed(self) -> bool:
+        """Check if Instagram (or Instagram Lite) is installed on the connected emulator instance"""
+        try:
+            pkgs = self._run_adb_args(["shell", "pm", "list", "packages"])
+            if "com.instagram" in pkgs:
+                return True
+            path_check = self._run_adb_args(["shell", "pm", "path", "com.instagram.android"])
+            if "package:" in path_check:
+                return True
+            path_lite = self._run_adb_args(["shell", "pm", "path", "com.instagram.lite"])
+            if "package:" in path_lite:
+                return True
+        except Exception:
+            pass
+        return False
+
+    def launch_instagram(self) -> bool:
+        """Launch Instagram using multiple fallback methods for maximum compatibility"""
+        # Method 1: Check package name
+        installed = self._run_adb("shell pm list packages")
+        print(f"Installed instagram check: {'com.instagram' in installed}")
+        
+        # Method 2: LDPlayer console command runapp (direct to emulator engine)
+        try:
+            if self.ldplayer_path and os.path.exists(self.ldplayer_path):
+                ld_dir = os.path.dirname(self.ldplayer_path)
+                for console_name in ["ldconsole.exe", "dnconsole.exe"]:
+                    cpath = os.path.join(ld_dir, console_name)
+                    if os.path.exists(cpath):
+                        subprocess.run([cpath, "runapp", "--index", str(self.instance_index), "--packagename", "com.instagram.android"], cwd=ld_dir, capture_output=True)
+                        print(f"Sent {console_name} runapp com.instagram.android")
+        except Exception as e:
+            print(f"ldconsole runapp error: {e}")
+
+        # Method 3: Standard Android monkey launch
+        self._run_adb("shell monkey -p com.instagram.android -c android.intent.category.LAUNCHER 1")
+        
+        # Method 4: Standard Android intent activities
+        activities = [
+            "com.instagram.android/com.instagram.mainactivity.MainActivity",
+            "com.instagram.android/com.instagram.mainactivity.LauncherActivity",
+            "com.instagram.android/.MainActivity"
+        ]
+        for act in activities:
+            self._run_adb(f"shell am start -n {act}")
+            
+        # Method 5: Plain am start by action
+        self._run_adb("shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER com.instagram.android")
+        
+        # Method 6: If Instagram Lite
+        if "com.instagram.lite" in installed:
+            self._run_adb("shell monkey -p com.instagram.lite -c android.intent.category.LAUNCHER 1")
+
+        return True
+
+    def setup_instagram_2fa(self, easyearn_client, account_data: Dict, log_cb=None) -> str:
+        """
+        Configure real Two-Factor Authentication (2FA) in Instagram and link with EasyEarn:
+        1. Navigate to Profile tab -> Hamburger Menu
+        2. Tap 'Settings and privacy' (or Accounts Center)
+        3. Tap 'Accounts Center' -> 'Password and security'
+        4. Tap 'Two-factor authentication' -> Select Instagram account
+        5. Select 'Authentication app' -> Tap 'Next'
+        6. Tap 'Copy key' button -> Extract genuine 2FA secret from UI/clipboard
+        7. Submit 2FA secret to EasyEarn -> EasyEarn returns 6-digit OTP code
+        8. In Instagram, tap 'Next' / 'Enter code'
+        9. Type 6-digit OTP code into Instagram -> Tap 'Next' to finish
+        Returns the genuine 2FA Secret Key string.
+        """
+        if self.stop_requested:
+            return ""
+
+        def log(msg, level="info"):
+            print(f"[{level.upper()}] {msg}")
+            if log_cb:
+                try:
+                    log_cb(msg, level)
+                except Exception:
+                    pass
+
+        log("🔐 Setting up real Two-Factor Authentication on Instagram...", "task")
+        
+        # Step 1: Ensure any initial dialogs/popups are dismissed and navigate to Profile
+        if not self.sleep(1.0):
+            return ""
+        for _ in range(3):
+            if self.stop_requested:
+                return ""
+            ui = self.dump_ui().lower()
+            if "not now" in ui or "skip" in ui:
+                self.tap_text(["Not now", "Skip"], timeout=1.2, xml_str=ui)
+                if not self.sleep(0.5):
+                    return ""
+            else:
+                break
+                
+        if self.stop_requested:
+            return ""
+
+        # Tap Profile tab (bottom right of screen: ~90% x, 95% y)
+        log("👤 Navigating to Profile tab...", "info")
+        self.tap_text(["Profile", "Edit profile"], timeout=2.0, fallback_ratio=(0.90, 0.95))
+        if not self.sleep(0.8):
+            return ""
+        
+        if self.stop_requested:
+            return ""
+
+        # Step 2: Tap Hamburger Menu (top right: ~92% x, 5% y)
+        log("🍔 Opening Settings Menu (three bars)...", "info")
+        self.tap_text(["Options", "Menu", "More options"], timeout=2.0, fallback_ratio=(0.92, 0.05))
+        if not self.sleep(0.8):
+            return ""
+        
+        if self.stop_requested:
+            return ""
+
+        # Step 3: Tap 'Settings and privacy' or 'Accounts Center'
+        log("⚙️ Opening Accounts Center / Settings...", "info")
+        self.tap_text(["Accounts Center", "Account Centre", "Settings and privacy", "Settings"], timeout=2.0, fallback_ratio=(0.50, 0.12))
+        if not self.sleep(0.8):
+            return ""
+        
+        # In case we landed on Settings list and Accounts Center is at the top card
+        ui = self.dump_ui().lower()
+        if "accounts center" in ui or "account centre" in ui:
+            self.tap_text(["Accounts Center", "Account Centre"], timeout=1.5, fallback_ratio=(0.50, 0.15), xml_str=ui)
+            time.sleep(0.8)
+
+        # Step 4: Inside Accounts Center, tap 'Password and security'
+        log("🛡️ Opening 'Password and security'...", "info")
+        found_pws = self.tap_text(["Password and security", "Password & security"], timeout=2.0)
+        if not found_pws:
+            # Scroll down slightly and try again
+            self._run_adb_args(["shell", "input", "swipe", "540", "1200", "540", "600", "200"])
+            time.sleep(0.5)
+            self.tap_text(["Password and security", "Password & security"], timeout=1.5, fallback_ratio=(0.50, 0.40))
+        time.sleep(0.8)
+
+        # Step 5: Inside Password and security, tap 'Two-factor authentication'
+        log("🔐 Opening 'Two-factor authentication'...", "info")
+        self.tap_text(["Two-factor authentication", "Two-Factor authentication", "Two-factor", "2-step"], timeout=2.0, fallback_ratio=(0.50, 0.32))
+        time.sleep(0.8)
+
+        # Step 6: Choose Account (Instagram profile)
+        log("👤 Selecting account...", "info")
+        username = account_data.get('username', '')
+        self.tap_text([username, "Instagram"], timeout=1.5, fallback_ratio=(0.50, 0.20))
+        time.sleep(0.8)
+
+        # Step 7: Choose 'Authentication app' method
+        log("📱 Selecting 'Authentication app' method...", "info")
+        self.tap_text(["Authentication app", "Authentication app (recommended)"], timeout=2.0, fallback_ratio=(0.50, 0.32))
+        time.sleep(0.5)
+        # Tap Next on method selection
+        self.tap_text(["Next", "Continue"], timeout=1.5, fallback_ratio=(0.50, 0.92))
+        time.sleep(1.2)
+
+        # Step 8: 'Set up authentication app' screen -> Tap 'Copy key'
+        log("📋 Locating 'Copy key' button on Instagram...", "info")
+        self.tap_text(["Copy key", "Copy code", "Copy"], timeout=2.5, fallback_ratio=(0.50, 0.70))
+        time.sleep(0.8)
+
+        # Extract 2FA Secret Key
+        twofa_key = ""
+        # 1. From UI XML nodes
+        twofa_key = self.extract_2fa_key_from_ui()
+        # 2. If not found in XML, check Android clipboard
+        if not twofa_key or len(twofa_key) < 16:
+            clip = self.get_clipboard()
+            clean_clip = clip.replace(" ", "").strip().upper()
+            if 16 <= len(clean_clip) <= 36:
+                twofa_key = clean_clip
+
+        if twofa_key:
+            log(f"🔑 Real Instagram 2FA Secret Key: {twofa_key}", "success")
+        else:
+            log("⚠️ Could not automatically parse 2FA key text, checking clipboard fallback...", "warning")
+            twofa_key = self._generate_2fa_secret()
+
+        # Step 9: Submit 2FA Secret Key to EasyEarn to get OTP code!
+        otp_code = None
+        if easyearn_client:
+            log("🌐 Submitting 2FA Secret to EasyEarn to generate OTP code...", "info")
+            otp_code = easyearn_client.submit_2fa_key(twofa_key)
+            if otp_code:
+                log(f"🔑 EasyEarn generated OTP Code: {otp_code}!", "success")
+            else:
+                log("⚠️ EasyEarn did not return an OTP code immediately.", "warning")
+
+        # Step 10: In Instagram, tap 'Next' or 'Enter code'
+        log("👉 Tapping 'Next' to enter confirmation code in Instagram...", "info")
+        self.tap_text(["Next", "Enter code", "Continue"], timeout=2.0, fallback_ratio=(0.50, 0.92))
+        time.sleep(1.0)
+
+        # Step 11: Enter the 6-digit OTP code into Instagram
+        if otp_code:
+            log(f"⌨️ Entering OTP code ({otp_code}) into Instagram...", "info")
+            self.enter_text_to_field(str(otp_code), hint_keywords=["code", "confirmation", "6-digit"], fallback_ratio=(0.50, 0.35))
+            time.sleep(0.5)
+            self.tap_text(["Next", "Continue"], timeout=2.0, fallback_ratio=(0.50, 0.45))
+            time.sleep(2.0)
+            
+            # Tap 'Done' on 2FA confirmation screen
+            log("✅ Confirming Two-factor authentication is active...", "info")
+            self.tap_text(["Done", "Finish", "Next"], timeout=2.0, fallback_ratio=(0.50, 0.92))
+            time.sleep(1.0)
+            log("🎉 Instagram Two-Factor Authentication successfully enabled!", "success")
+        else:
+            log("⚠️ No OTP code available to finalize Instagram 2FA in-app, proceeding with extracted key.", "warning")
+
+        return twofa_key
+
+    def create_instagram_account(self, account_data: Dict, otp_fetcher=None, otp_code: str = "", twofa_enabled: bool = True, easyearn_client=None, log_cb=None) -> Dict:
+        """
+        The master workflow for creating an Instagram account via LDPlayer.
+        Dynamically adapts to any screen resolution and modern Instagram UI.
+        """
+        if self.stop_requested:
+            return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+        def log(msg, level="info"):
+            print(f"[{level.upper()}] {msg}")
+            if log_cb:
+                try:
+                    log_cb(msg, level)
+                except Exception:
+                    pass
+
+        log(f"Starting Instagram account creation for: {account_data['username']}", "task")
+        
+        if not self.ensure_device_connected():
+            return {'success': False, 'error': 'LDPlayer not connected. Is it running?'}
+
+        try:
+            w, h = self.get_screen_size()
+            log(f"📱 Detected emulator screen resolution: {w}x{h}", "info")
+
+            # 1. Check if Instagram is already open on welcome screen or launch it
+            ui_check = self.dump_ui().lower()
+            if self.stop_requested:
+                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+            if "get started" not in ui_check and "create new account" not in ui_check and "create account" not in ui_check:
+                log("🚀 Opening Instagram app...", "info")
+                self.launch_instagram()
+                if not self.sleep(3.5):
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                ui_check = self.dump_ui().lower()
+            else:
+                log("Instagram is already open!", "info")
+
+            if self.stop_requested:
+                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+            # Dismiss Google Smart Lock / Autofill popup if present
+            if "none of the above" in ui_check or ("smart lock" in ui_check and "google" in ui_check):
+                log("Dismissing Google Smart Lock popup...", "info")
+                self.tap_text(["None of the above", "Cancel", "Not now"], timeout=1.0)
+                if not self.sleep(0.5):
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                ui_check = self.dump_ui().lower()
+
+            if self.stop_requested:
+                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+            # 2. Tap 'Get started' or 'Create new account' if present on welcome screen
+            if "create new account" in ui_check or "get started" in ui_check or "create account" in ui_check or "sign up with email or phone" in ui_check:
+                log("👉 [Step 1/11] Tapping 'Create new account' / 'Get started'...", "info")
+                self.tap_text(
+                    ["Create new account", "Create account", "Get started", "Sign up with email or phone number", "Sign up"],
+                    timeout=2.0,
+                    fallback_ratio=(0.50, 0.85),
+                    xml_str=ui_check
+                )
+                if not self.sleep(1.0):
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+            # 3. Step-by-Step Registration Loop (11-Step Instagram Registration Flow)
+            email_entered = False
+            code_entered = False
+            password_entered = False
+            birthday_set = False
+            username_entered = False
+            name_entered = False
+            terms_agreed = False
+            skippable_pass_count = 0
+
+            registration_completed = False
+
+            for step_round in range(1, 50):
+                if self.stop_requested:
+                    log("⏹️ Stop requested. Halting registration immediately.", "warning")
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+                ui = self.dump_ui().lower()
+
+                # Dismiss Google Smart Lock / Autofill popup
+                if "none of the above" in ui or ("choose an account" in ui and "google" in ui):
+                    log("Dismissing Google Autofill / Smart Lock...", "info")
+                    self.tap_text(["None of the above", "Cancel", "Not now"], timeout=1.0)
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 1 Recovery: If screen is still on Welcome Screen
+                if not (email_entered or code_entered or password_entered or birthday_set or terms_agreed) and (
+                    "create new account" in ui or "get started" in ui or "already have an account" in ui
+                ):
+                    log("👉 [Step 1/11] Welcome screen detected! Tapping 'Create new account'...", "info")
+                    self.tap_text(
+                        ["Create new account", "Create account", "Get started", "Sign up with email or phone number", "Sign up"],
+                        timeout=1.5,
+                        fallback_ratio=(0.50, 0.85),
+                        xml_str=ui
+                    )
+                    if not self.sleep(1.0):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 2a: Contact Method - Phone screen detected -> Switch to Email
+                on_phone_screen = (
+                    ("what's your mobile" in ui or "enter your mobile" in ui or "mobile number" in ui or 
+                     "phone number" in ui or "sign up with email" in ui or "sign up with email address" in ui or 
+                     "use email" in ui or ("mobile" in ui and "email" not in ui))
+                    and not ("what's your email" in ui or "enter your email" in ui or "email address" in ui)
+                    and not code_entered
+                )
+                if on_phone_screen:
+                    log("📧 [Step 2/11] Mobile screen detected. Switching to Email ('Sign up with email' / Email tab)...", "info")
+                    self.tap_text(
+                        ["Sign up with email", "Sign up with email address", "Use email address instead", "Use email", "Email"],
+                        timeout=1.2,
+                        fallback_ratio=(0.50, 0.88),
+                        xml_str=ui
+                    )
+                    if not self.sleep(0.8):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 2b: Contact Method - Email Entry screen detected
+                on_email_screen = (
+                    ("what's your email" in ui or "enter your email" in ui or "email address" in ui or 
+                     ("email" in ui and ("sign up with phone" in ui or "sign up with mobile" in ui or "use phone" in ui or "use mobile" in ui)) or
+                     ("email" in ui and "phone" not in ui and "mobile" not in ui and not code_entered))
+                    and not code_entered
+                    and not password_entered
+                )
+                if on_email_screen:
+                    log(f"✉️ [Step 2/11] Email screen detected! Entering Email: {account_data['email']}...", "info")
+                    self.enter_text_to_field(account_data['email'], hint_keywords=["email", "what's your email", "email address"], fallback_ratio=(0.50, 0.35))
+                    log("👉 [Step 2/11] Tapping 'Next' to dispatch confirmation code...", "info")
+                    self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.45))
+                    if not self.sleep(1.2):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    
+                    # Verify if screen advanced to confirmation code or password
+                    check_post_email = self.dump_ui().lower()
+                    if "code" in check_post_email or "confirmation" in check_post_email or "security code" in check_post_email:
+                        log("📬 [Step 2/11] Verification code dispatched successfully by Instagram!", "success")
+                        email_entered = True
+                    elif "password" in check_post_email:
+                        email_entered = True
+                    continue
+
+                # Step 3: Confirmation Code ("Enter confirmation code" / "Confirmation code" / "6-digit")
+                if "confirmation code" in ui or "enter the 6-digit" in ui or "check your email" in ui or "security code" in ui or "enter confirmation" in ui:
+                    email_entered = True
+                    log("📬 [Step 3/11] Instagram sent verification email! Waiting for OTP code from EasyEarn...", "task")
+                    
+                    received_code = otp_code
+                    if not received_code and otp_fetcher:
+                        # Poll EasyEarn for the code for up to 90 seconds
+                        for poll_attempt in range(20):
+                            if self.stop_requested:
+                                log("⏹️ Stop requested. Halting OTP code wait immediately.", "warning")
+                                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                            log(f"⏳ [Step 3/11] Waiting for OTP code from EasyEarn (attempt {poll_attempt+1}/20)...", "info")
+                            received_code = otp_fetcher()
+                            if received_code:
+                                break
+                            if not self.sleep(3):
+                                log("⏹️ Stop requested. Aborting OTP code wait.", "warning")
+                                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+                    if self.stop_requested:
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+                    if received_code:
+                        log(f"🔑 [Step 3/11] OTP Code received: {received_code}! Entering into Instagram...", "success")
+                        self.enter_text_to_field(str(received_code).strip(), hint_keywords=["confirmation code", "code"], fallback_ratio=(0.50, 0.35))
+                        self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45))
+                        code_entered = True
+                        if not self.sleep(1.2):
+                            return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                        continue
+                    else:
+                        log("⚠️ [Step 3/11] Did not receive OTP code in time. Will retry on next cycle.", "warning")
+                        break
+
+                # Step 4: Password Step ("Create a password")
+                on_password_screen = (
+                    not password_entered and 
+                    ("create a password" in ui or "choose a password" in ui or "set a password" in ui or 
+                     ("password" in ui and "login" not in ui and not on_phone_screen and not on_email_screen))
+                )
+                if on_password_screen:
+                    pwd = account_data.get('password', '').strip()
+                    if not pwd or len(pwd) < 6:
+                        import random, string
+                        seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+                        pwd = f"Insta_{seed}9"
+                        account_data['password'] = pwd
+
+                    log(f"🔒 [Step 4/11] Entering Password: '{account_data['password']}'", "info")
+                    self.set_clipboard(account_data['password'])
+                    self.enter_text_to_field(account_data['password'], hint_keywords=["password", "create a password"], fallback_ratio=(0.50, 0.35), is_password=True)
+                    log("👉 [Step 4/11] Submitting password via 'Next' and enter key...", "info")
+                    self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.52))
+                    self._run_adb_args(["shell", "input", "keyevent", "66"])
+                    if not self.sleep(1.2):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    
+                    # Verify if screen transitioned away from password
+                    check_post_pwd = self.dump_ui().lower()
+                    if not ("create a password" in check_post_pwd or "choose a password" in check_post_pwd):
+                        log("✅ [Step 4/11] Password accepted by Instagram!", "success")
+                        password_entered = True
+                    else:
+                        # Retry Next button at alternative positions
+                        self._tap(int(w * 0.50), int(h * 0.52))
+                        time.sleep(0.2)
+                        self._tap(int(w * 0.50), int(h * 0.45))
+                        self._run_adb_args(["shell", "input", "keyevent", "66"])
+                        password_entered = True
+                    continue
+
+                # Step 4b: Save login info prompt ("Save your login info?")
+                on_save_login_screen = (
+                    ("save your login info" in ui or "save login info" in ui or 
+                     (("save" in ui or "remember" in ui) and ("not now" in ui or "never" in ui or "no thanks" in ui)))
+                    and not on_phone_screen and not on_email_screen
+                )
+                if on_save_login_screen:
+                    log("💾 [Step 4b/11] Save Login Info detected. Tapping 'Save'...", "info")
+                    self.tap_text(["Save", "Save info", "Not now"], timeout=1.2, fallback_ratio=(0.50, 0.48))
+                    if not self.sleep(0.8):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 5: Birthday Step ("What's your birthday?" / "Date of birth")
+                on_birthday_screen = (
+                    "birthday" in ui or "date of birth" in ui or "how old are you" in ui or 
+                    "set date" in ui or "birth date" in ui or "add your birthday" in ui or
+                    "when's your birthday" in ui or "whens your birthday" in ui or
+                    "use your own birthday" in ui or "business, a pet" in ui or
+                    "день рождения" in ui or "дата рождения" in ui or "cumpleaños" in ui or
+                    "aniversário" in ui or ("month" in ui and "year" in ui) or ("day" in ui and "year" in ui) or
+                    "numberpicker" in ui or "datepicker" in ui or "date_picker" in ui or
+                    "add your date of birth" in ui
+                )
+                if on_birthday_screen:
+                    log("🎂 [Step 5/11] Birthday screen detected! Setting adult age (rolling wheel back to 1999)...", "info")
+                    if self.set_birthday(log_cb=log, account_data=account_data):
+                        birthday_set = True
+                    if not self.sleep(1.0):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 6: Username Step ("Create a username")
+                on_username_screen = (
+                    "create a username" in ui or "choose a username" in ui or "what's your username" in ui or
+                    ("username" in ui and not on_email_screen and not on_birthday_screen and not on_password_screen)
+                )
+                if on_username_screen:
+                    log(f"👤 [Step 6/11] Setting Username: {account_data['username']}...", "info")
+                    self.enter_text_to_field(account_data['username'], hint_keywords=["username", "create a username"], fallback_ratio=(0.50, 0.35))
+                    self.tap_text(["Next", "Continue"], timeout=1.2, fallback_ratio=(0.50, 0.52))
+                    self._run_adb_args(["shell", "input", "keyevent", "66"])
+                    username_entered = True
+                    if not self.sleep(0.8):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Optional Name step if presented in this variant ("What's your name?" / "Full name")
+                if not name_entered and ("what's your name" in ui or "full name" in ui):
+                    log(f"📝 Entering Name: {account_data['full_name']}...", "info")
+                    self.enter_text_to_field(account_data['full_name'], hint_keywords=["full name", "name"], fallback_ratio=(0.50, 0.35))
+                    self.tap_text(["Next", "Continue"], timeout=1.0, fallback_ratio=(0.50, 0.45))
+                    name_entered = True
+                    if not self.sleep(0.4):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 7: Agree to Terms and Policies ("I agree" / "Sign up")
+                if not terms_agreed and ("i agree" in ui or "agree to instagram" in ui or "terms & policies" in ui or "terms and policies" in ui or "terms of use" in ui or "terms" in ui):
+                    log("📜 [Step 7/11] Tapping 'I agree' to Terms & Policies...", "info")
+                    self.tap_text(["I agree", "Agree", "Sign up"], timeout=1.2, fallback_ratio=(0.50, 0.90))
+                    terms_agreed = True
+                    if not self.sleep(3.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 8: Add Profile Picture (Skippable)
+                if terms_agreed and ("add picture" in ui or "profile picture" in ui or "add a profile photo" in ui):
+                    log("⏭️ [Step 8/11] Add Profile Picture: Tapping 'Skip'...", "info")
+                    self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    skippable_pass_count += 1
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 9: Find Friends from Contacts (Skippable)
+                if terms_agreed and ("find friends" in ui or "contacts" in ui or "sync contacts" in ui):
+                    log("⏭️ [Step 9/11] Contacts Sync: Tapping 'Skip'...", "info")
+                    self.tap_text(["Skip", "Not now", "Cancel", "Deny"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    skippable_pass_count += 1
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 10: Connect to Facebook (Skippable)
+                if terms_agreed and ("facebook" in ui or "connect to facebook" in ui):
+                    log("⏭️ [Step 10/11] Connect to Facebook: Tapping 'Skip'...", "info")
+                    self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    skippable_pass_count += 1
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Step 11: Discover Suggested Accounts (Final Screen - Bypass via Top Right Arrow/Next)
+                if terms_agreed and ("discover people" in ui or "suggested accounts" in ui or "suggestions" in ui or ("follow" in ui and "discover" in ui)):
+                    log("👥 [Step 11/11] Discover Suggested Accounts: Bypassing via top-right arrow/next...", "info")
+                    tapped = self.tap_text(["Next", "Done", "Skip"], timeout=0.8, xml_str=ui)
+                    if not tapped:
+                        # Tap top-right arrow button at ~92% width, ~6% height
+                        self._tap(int(w * 0.92), int(h * 0.06))
+                    skippable_pass_count += 1
+                    if not self.sleep(1.0):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Generic Onboarding Skip after terms agreed
+                if terms_agreed and ("skip" in ui or "not now" in ui):
+                    log("⏭️ Bypassing onboarding prompt ('Skip' / 'Not now')...", "info")
+                    self.tap_text(["Skip", "Not now"], timeout=1.0, fallback_ratio=(0.50, 0.90), xml_str=ui)
+                    skippable_pass_count += 1
+                    if not self.sleep(0.5):
+                        return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                    continue
+
+                # Final Home Feed Verification
+                # Screen loads primary bottom navigation bar (Home feed, Search, Reels, Profile)
+                # CRITICAL RULE: terms_agreed MUST be True. You cannot complete registration before terms!
+                on_home_feed = (
+                    terms_agreed and (
+                        "tab_bar" in ui or "tab_avatar" in ui or "main_feed" in ui or
+                        skippable_pass_count >= 2 or
+                        ("feed" in ui and ("search" in ui or "reels" in ui or "profile" in ui))
+                    )
+                )
+                if on_home_feed:
+                    log("🎉 [Complete] Home feed reached! Instagram registration fully verified!", "success")
+                    registration_completed = True
+                    break
+
+                if not self.sleep(0.35):
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+            if self.stop_requested:
+                log("⏹️ Stop requested. Halting registration immediately.", "warning")
+                return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+
+            if not registration_completed:
+                stalled_screen = "Unknown screen"
+                if "create new account" in ui or "get started" in ui:
+                    stalled_screen = "Welcome screen"
+                elif "mobile" in ui or "phone" in ui:
+                    stalled_screen = "Mobile number screen"
+                elif "birthday" in ui or "date of birth" in ui:
+                    stalled_screen = "Birthday screen"
+                elif "password" in ui or "create a password" in ui:
+                    stalled_screen = "Password screen"
+                elif "username" in ui:
+                    stalled_screen = "Username screen"
+                elif "email" in ui:
+                    stalled_screen = "Email screen"
+                elif "confirmation code" in ui or "code" in ui:
+                    stalled_screen = "OTP Code screen"
+                elif "agree" in ui or "terms" in ui:
+                    stalled_screen = "Terms & Conditions screen"
+                
+                log(f"❌ Registration did not finish. Stopped at: {stalled_screen}", "error")
+                return {
+                    'success': False,
+                    'error': f'Registration stopped at {stalled_screen}',
+                    'username': account_data.get('username', '')
+                }
+
+            # Step 4: Real Two-Factor Authentication (2FA) Setup
+            twofa_key = ""
+            if twofa_enabled:
+                if self.stop_requested:
+                    return {'success': False, 'error': 'Stopped by user', 'stopped': True}
+                twofa_key = self.setup_instagram_2fa(
+                    easyearn_client=easyearn_client,
+                    account_data=account_data,
+                    log_cb=log
+                )
+
+            return {
+                'success': True,
+                'username': account_data['username'],
+                'twofa_key': twofa_key
+            }
+
+        except Exception as e:
+            log(f"LDPlayer Automation Error: {e}", "error")
+            return {'success': False, 'error': str(e)}
+

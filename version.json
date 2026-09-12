@@ -1,12 +1,10 @@
 {
-  "version": "1.7.0",
-  "release_date": "2026-09-12 13:00",
-  "build_id": "v1.7.0-rel",
+  "version": "1.7.1",
+  "release_date": "2026-09-12 13:21",
+  "build_id": "v1.7.1-rel",
   "features": [
+    "Hotfix: Restored missing create_instagram_account method in ldplayer_automation.py that caused a CRITICAL ERROR",
     "Aggressive Birthday Scroll: Completely replaced the complex set_birthday automation with highly efficient logic that forcefully swipes down on the right side of the screen 6 times to rapidly spin the year wheel backward.",
-    "Robust DOM Field Extraction: The EasyEarn extraction logic now aggressively scrapes the DOM for Login, Password, First Name, Email, and Birthday fields.",
-    "Updated Logging Strings: Adjusted logging strings to output Birthday explicitly.",
-    "Prominent Current Task Credentials Grid: Dedicated unmasked visibility cards for Login, Full Name, Password, and Email Address across desktop Tkinter GUI and web interface",
-    "One-Click Quick Copy Suite: Individual and combo copy actions for User:Pass, Email:Code, Password only, OTP only, and full combo string"
+    "Robust DOM Field Extraction: The EasyEarn extraction logic now aggressively scrapes the DOM for Login, Password, First Name, Email, and Birthday fields."
   ]
 }

@@ -89,7 +89,7 @@ BEGIN {
     print "        return True"
     next
 }
-in_method == 1 && /^    def confirm_date_picker\(self, log_cb=None\) -> bool:/ {
+in_method == 1 && /^    def get_clipboard\(self\) -> str:/ {
     in_method = 0
     print $0
     next
