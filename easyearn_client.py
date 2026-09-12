@@ -345,22 +345,24 @@ class EasyEarnClient:
                                 else if (lbl.indexOf('pass') !== -1) res.password = v;
                                 else if (lbl.indexOf('name') !== -1) res.first_name = v;
                                 else if (lbl.indexOf('mail') !== -1) res.email = v;
+                                else if (lbl.indexOf('birth') !== -1) res.birthday = v;
                             }
                         }
                     });
-
                     // C. Fallback to global JS objects if defined
                     if (typeof gen !== 'undefined') {
                         if (!res.login && gen.login) res.login = gen.login;
                         if (!res.password && gen.password) res.password = gen.password;
                         if (!res.first_name && gen.first_name) res.first_name = gen.first_name;
                         if (!res.email && gen.email) res.email = gen.email;
+                        if (!res.birthday && gen.birthday) res.birthday = gen.birthday;
                     }
                     if (typeof taskData !== 'undefined') {
                         if (!res.login && taskData.login) res.login = taskData.login;
                         if (!res.password && taskData.password) res.password = taskData.password;
                         if (!res.email && taskData.email) res.email = taskData.email;
                         if (!res.first_name && taskData.first_name) res.first_name = taskData.first_name;
+                        if (!res.birthday && taskData.birthday) res.birthday = taskData.birthday;
                     }
 
                     return res;
@@ -372,8 +374,35 @@ class EasyEarnClient:
                             data[k] = str(v).strip()
 
                 # 2. Python Selenium DOM fallback for any remaining missing fields
+                # Find all elements that might contain data
                 field_keys = ['login', 'password', 'first_name', 'email']
-                for key in field_keys:
+                try:
+                    # Look for input fields
+                    inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                    for inp in inputs:
+                        try:
+                            inp_id = (inp.get_attribute('id') or '').lower()
+                            inp_name = (inp.get_attribute('name') or '').lower()
+                            inp_val = (inp.get_attribute('value') or '').strip()
+                            if not inp_val or '[email' in inp_val:
+                                continue
+                            if ('login' in inp_id or 'login' in inp_name or 'user' in inp_id or 'user' in inp_name) and not data.get('login'):
+                                data['login'] = inp_val
+                            elif ('pass' in inp_id or 'pass' in inp_name) and not data.get('password'):
+                                data['password'] = inp_val
+                            elif ('name' in inp_id or 'name' in inp_name) and not data.get('first_name'):
+                                data['first_name'] = inp_val
+                            elif ('mail' in inp_id or 'mail' in inp_name) and not data.get('email'):
+                                data['email'] = inp_val
+                            elif ('birth' in inp_id or 'birth' in inp_name or 'date' in inp_id or 'date' in inp_name) and not data.get('birthday'):
+                                data['birthday'] = inp_val
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+                # Original fallback logic
+                for key in field_keys + ['birthday']:
                     if key not in data or not data[key] or '[email' in data[key]:
                         try:
                             el = self.driver.find_element(By.ID, f"field-{key}")
@@ -391,6 +420,35 @@ class EasyEarnClient:
                                 data[key] = val
                         except Exception:
                             pass
+
+                # Scrape .data-row again in python just in case JS failed
+                try:
+                    rows = self.driver.find_elements(By.CLASS_NAME, "data-row")
+                    for row in rows:
+                        try:
+                            label = row.find_element(By.CLASS_NAME, "data-label").text.lower().strip()
+                            val_el = row.find_element(By.CLASS_NAME, "data-value")
+                            cf_elements = val_el.find_elements(By.CLASS_NAME, "__cf_email__")
+                            if cf_elements:
+                                cf_hex = cf_elements[0].get_attribute('data-cfemail') or ''
+                                val = decode_cloudflare_email(cf_hex)
+                            else:
+                                val = val_el.text.strip()
+                            if val and '[email' not in val:
+                                if ('login' in label or 'user' in label) and not data.get('login'):
+                                    data['login'] = val
+                                elif 'pass' in label and not data.get('password'):
+                                    data['password'] = val
+                                elif 'name' in label and not data.get('first_name'):
+                                    data['first_name'] = val
+                                elif 'mail' in label and not data.get('email'):
+                                    data['email'] = val
+                                elif 'birth' in label and not data.get('birthday'):
+                                    data['birthday'] = val
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
                 # If all 4 key fields are gathered, break immediately
                 if data.get('login') and data.get('password') and data.get('first_name') and data.get('email') and '[email' not in data.get('email', ''):
@@ -441,6 +499,7 @@ class EasyEarnClient:
         self.log(f"   🔒 Password   : {data.get('password')}", "info")
         self.log(f"   📝 First Name : {data.get('first_name')}", "info")
         self.log(f"   ✉️ Email      : {data.get('email')}", "info")
+        self.log(f"   🎂 Birthday   : {data.get('birthday')}", "info")
 
         self.task_data = data
         return data

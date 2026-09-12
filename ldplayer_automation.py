@@ -1551,9 +1551,11 @@ class LDPlayerAutomation:
                     "birthday" in ui or "date of birth" in ui or "how old are you" in ui or 
                     "set date" in ui or "birth date" in ui or "add your birthday" in ui or
                     "when's your birthday" in ui or "whens your birthday" in ui or
+                    "use your own birthday" in ui or "business, a pet" in ui or
                     "день рождения" in ui or "дата рождения" in ui or "cumpleaños" in ui or
                     "aniversário" in ui or ("month" in ui and "year" in ui) or ("day" in ui and "year" in ui) or
-                    "numberpicker" in ui or "datepicker" in ui or "date_picker" in ui
+                    "numberpicker" in ui or "datepicker" in ui or "date_picker" in ui or
+                    "add your date of birth" in ui
                 )
                 if on_birthday_screen:
                     log("🎂 [Step 5/11] Birthday screen detected! Setting adult age (rolling wheel back to 1999)...", "info")
