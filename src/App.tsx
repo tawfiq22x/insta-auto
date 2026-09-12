@@ -360,12 +360,38 @@ export default function App() {
             )}
           </div>
 
+          {/* Core Credentials Quick Summary Bar */}
+          <div className="bg-slate-950/90 border border-indigo-500/25 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="font-semibold text-slate-200 uppercase tracking-wider text-xs">Active Credentials:</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4 font-mono">
+              <span className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 px-2.5 py-1 rounded-lg">
+                <span className="text-slate-500 text-xs font-sans">USER:</span>
+                <span className="text-cyan-300 font-bold">{currentTask?.login || '—'}</span>
+              </span>
+              <span className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 px-2.5 py-1 rounded-lg">
+                <span className="text-slate-500 text-xs font-sans">NAME:</span>
+                <span className="text-emerald-300 font-bold">{currentTask?.name || '—'}</span>
+              </span>
+              <span className="flex items-center gap-1.5 bg-amber-950/30 border border-amber-500/30 px-2.5 py-1 rounded-lg">
+                <span className="text-amber-500/80 text-xs font-sans">PASS:</span>
+                <span className="text-amber-300 font-bold tracking-wide">{currentTask?.password || '—'}</span>
+              </span>
+              <span className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 px-2.5 py-1 rounded-lg">
+                <span className="text-slate-500 text-xs font-sans">EMAIL:</span>
+                <span className="text-indigo-300 font-bold">{currentTask?.email || '—'}</span>
+              </span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {/* 1. Login */}
-            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
+            <div className="bg-slate-950/80 border border-slate-800 hover:border-cyan-500/40 rounded-xl p-3 relative group transition-colors">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span className="flex items-center gap-1.5 text-cyan-400 font-medium">
-                  <User className="w-3.5 h-3.5" /> Login / User
+                <span className="flex items-center gap-1.5 text-cyan-400 font-semibold">
+                  <User className="w-3.5 h-3.5" /> 1. Login / Username
                 </span>
                 {currentTask?.login && (
                   <button 
@@ -377,16 +403,16 @@ export default function App() {
                   </button>
                 )}
               </div>
-              <div className="font-mono text-sm text-slate-100 font-semibold truncate select-all">
+              <div className="font-mono text-sm text-cyan-200 font-bold truncate select-all">
                 {currentTask?.login || <span className="text-slate-600 font-normal italic">Waiting for task...</span>}
               </div>
             </div>
 
             {/* 2. Name */}
-            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
+            <div className="bg-slate-950/80 border border-slate-800 hover:border-emerald-500/40 rounded-xl p-3 relative group transition-colors">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
-                  <Tag className="w-3.5 h-3.5" /> Full Name
+                <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                  <Tag className="w-3.5 h-3.5" /> 2. Full Name
                 </span>
                 {currentTask?.name && (
                   <button 
@@ -398,16 +424,16 @@ export default function App() {
                   </button>
                 )}
               </div>
-              <div className="font-mono text-sm text-slate-100 font-semibold truncate select-all">
+              <div className="font-mono text-sm text-emerald-200 font-bold truncate select-all">
                 {currentTask?.name || <span className="text-slate-600 font-normal italic">Waiting for task...</span>}
               </div>
             </div>
 
             {/* 3. Password - UNMASKED PLAIN TEXT */}
-            <div className="bg-slate-950/80 border border-amber-500/30 rounded-xl p-3 relative group">
+            <div className="bg-slate-950/80 border border-amber-500/40 hover:border-amber-400/60 rounded-xl p-3 relative group transition-colors shadow-sm shadow-amber-950/30">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span className="flex items-center gap-1.5 text-amber-400 font-medium">
-                  <Lock className="w-3.5 h-3.5" /> Password (Unmasked)
+                <span className="flex items-center gap-1.5 text-amber-400 font-bold">
+                  <Lock className="w-3.5 h-3.5" /> 3. Password (Unmasked)
                 </span>
                 {currentTask?.password && (
                   <button 
@@ -419,16 +445,16 @@ export default function App() {
                   </button>
                 )}
               </div>
-              <div className="font-mono text-sm text-amber-300 font-bold tracking-wide truncate select-all">
+              <div className="font-mono text-sm text-amber-300 font-extrabold tracking-wide truncate select-all">
                 {currentTask?.password || <span className="text-slate-600 font-normal italic">Waiting for task...</span>}
               </div>
             </div>
 
             {/* 4. Email */}
-            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
+            <div className="bg-slate-950/80 border border-slate-800 hover:border-indigo-500/40 rounded-xl p-3 relative group transition-colors">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                <span className="flex items-center gap-1.5 text-indigo-400 font-medium">
-                  <Mail className="w-3.5 h-3.5" /> Email Address
+                <span className="flex items-center gap-1.5 text-indigo-400 font-semibold">
+                  <Mail className="w-3.5 h-3.5" /> 4. Email Address
                 </span>
                 {currentTask?.email && (
                   <button 
@@ -440,7 +466,7 @@ export default function App() {
                   </button>
                 )}
               </div>
-              <div className="font-mono text-sm text-slate-100 font-semibold truncate select-all">
+              <div className="font-mono text-sm text-indigo-200 font-bold truncate select-all">
                 {currentTask?.email || <span className="text-slate-600 font-normal italic">Waiting for task...</span>}
               </div>
             </div>

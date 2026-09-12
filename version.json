@@ -1,15 +1,13 @@
 {
-  "version": "1.5.8",
-  "release_date": "2026-09-11 21:50",
-  "build_id": "v1.5.8-rel",
+  "version": "1.6.0",
+  "release_date": "2026-09-12 11:15",
+  "build_id": "v1.6.0-rel",
   "features": [
-    "Smart Dual-Direction Birthday Wheel Scrolling: Dynamically detects whether Year wheel requires downward or upward drag to reach adult age (1995-2002)",
-    "DatePicker Auto-Activation: Automatically taps the date display box if the wheel bottom sheet is not opened yet",
-    "Direct NumberPicker Input Bypass: Automatically inputs 1999 directly into native NumberPicker EditText if available",
-    "Age Confirmation & Error Popup Handling: Automatically detects and confirms 'Are you X years old?' dialogs and dismisses under-13 warnings",
-    "Zero Disk Footprint: Removed account collection and disk saving (no collected_accounts.txt or .csv) for total PC privacy",
-    "Live Ephemeral Credential Visibility: Passwords, Login, Full Name, and Email displayed unmasked in real time only during active task",
-    "Instant Combo Copy: One-click 'Copy Combo' button in active task bar for username:password:email:name clipboard access",
-    "IME & Position-Verified Password Submission: Uses dual-trigger (Enter key + Next button at y=0.52) and verifies screen transition before advancing"
+    "Prominent Current Task Credentials Grid: Dedicated unmasked visibility cards for Login, Full Name, Password, and Email Address across desktop Tkinter GUI and web interface",
+    "One-Click Quick Copy Suite: Individual and combo copy actions for User:Pass, Email:Code, Password only, OTP only, and full combo string",
+    "High-Velocity Physics Fling Birthday Automation: Uses fast 110ms momentum flings to spin Year wheel directly to target year (1999) without stalling",
+    "DatePicker Detection & Modal Confirmation: Automatically detects bottom-sheet DatePicker and confirms dialog using Set/OK/button1 before tapping Next",
+    "Multi-lingual Birthday Keywords: Recognizes English, Russian, Spanish, and Portuguese birthday screen headers and numberpickers",
+    "Strict Sequence Enforcement: Prevents premature Home Feed completion until Terms & Policies are genuinely agreed to"
   ]
 }

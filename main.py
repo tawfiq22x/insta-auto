@@ -199,12 +199,15 @@ class InstagramAutomationController:
         ttk.Button(control_frame, text="🌐 Open Browser", command=self.manual_open_browser, width=15).grid(row=0, column=7, padx=4)
         
         # === Current Task ===
-        task_frame = ttk.LabelFrame(dashboard_tab, text="📋 Current Task (All Account Information & Live Status)", padding="8")
+        task_frame = ttk.LabelFrame(dashboard_tab, text="📋 Current Task — Account Credentials: Login, Name, Password & Email", padding="10")
         task_frame.grid(row=4, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=4)
+        
+        for c in range(4):
+            task_frame.columnconfigure(c, weight=1)
         
         # Row 0: Summary Banner & Live Step Progress
         header_row = ttk.Frame(task_frame)
-        header_row.pack(fill=tk.X, pady=(0, 5))
+        header_row.grid(row=0, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 6))
         
         self.task_info = ttk.Label(header_row, text="No active task (Waiting for next task from EasyEarn...)", font=('Arial', 9, 'bold'), foreground='#9cdcfe')
         self.task_info.pack(side=tk.LEFT)
@@ -212,69 +215,84 @@ class InstagramAutomationController:
         self.task_step_badge = ttk.Label(header_row, text="[IDLE]", font=('Arial', 9, 'bold'), foreground='#d7ba7d')
         self.task_step_badge.pack(side=tk.RIGHT)
 
-        # Row 1: Core Credentials (Login, Name, Password, Email)
-        r1_frame = ttk.Frame(task_frame)
-        r1_frame.pack(fill=tk.X, pady=(0, 4))
-        
-        ttk.Label(r1_frame, text="👤 Login:").pack(side=tk.LEFT, padx=(2, 2))
-        self.curr_login_entry = ttk.Entry(r1_frame, width=15, font=('Consolas', 9))
-        self.curr_login_entry.pack(side=tk.LEFT, padx=(0, 8))
+        # Row 1: The 4 Core Requested Credentials (Login, Name, Password, Email)
+        # 1. Login / Username
+        f_login = ttk.LabelFrame(task_frame, text="👤 Login / Username", padding="4")
+        f_login.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=3, pady=2)
+        f_login.columnconfigure(0, weight=1)
+        self.curr_login_entry = tk.Entry(f_login, font=('Consolas', 10, 'bold'), bg='#1e293b', fg='#38bdf8', relief=tk.FLAT, bd=2)
+        self.curr_login_entry.pack(fill=tk.X, expand=True)
         self.curr_login_entry.insert(0, "-")
         self.curr_login_entry.config(state='readonly')
-        
-        ttk.Label(r1_frame, text="📝 Name:").pack(side=tk.LEFT, padx=(2, 2))
-        self.curr_name_entry = ttk.Entry(r1_frame, width=15, font=('Consolas', 9))
-        self.curr_name_entry.pack(side=tk.LEFT, padx=(0, 8))
+
+        # 2. Full Name
+        f_name = ttk.LabelFrame(task_frame, text="📝 Full Name", padding="4")
+        f_name.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=3, pady=2)
+        f_name.columnconfigure(0, weight=1)
+        self.curr_name_entry = tk.Entry(f_name, font=('Consolas', 10, 'bold'), bg='#1e293b', fg='#4ade80', relief=tk.FLAT, bd=2)
+        self.curr_name_entry.pack(fill=tk.X, expand=True)
         self.curr_name_entry.insert(0, "-")
         self.curr_name_entry.config(state='readonly')
-        
-        ttk.Label(r1_frame, text="🔒 Pass:").pack(side=tk.LEFT, padx=(2, 2))
-        self.curr_pass_entry = ttk.Entry(r1_frame, width=15, font=('Consolas', 9))
-        self.curr_pass_entry.pack(side=tk.LEFT, padx=(0, 8))
+
+        # 3. Password (Plain Text Unmasked)
+        f_pass = ttk.LabelFrame(task_frame, text="🔒 Password (Unmasked)", padding="4")
+        f_pass.grid(row=1, column=2, sticky=(tk.W, tk.E), padx=3, pady=2)
+        f_pass.columnconfigure(0, weight=1)
+        self.curr_pass_entry = tk.Entry(f_pass, font=('Consolas', 10, 'bold'), bg='#1e293b', fg='#fbbf24', relief=tk.FLAT, bd=2)
+        self.curr_pass_entry.pack(fill=tk.X, expand=True)
         self.curr_pass_entry.insert(0, "-")
         self.curr_pass_entry.config(state='readonly')
-        
-        ttk.Label(r1_frame, text="✉️ Email:").pack(side=tk.LEFT, padx=(2, 2))
-        self.curr_email_entry = ttk.Entry(r1_frame, width=28, font=('Consolas', 9))
-        self.curr_email_entry.pack(side=tk.LEFT, padx=(0, 2), fill=tk.X, expand=True)
+
+        # 4. Email Address
+        f_email = ttk.LabelFrame(task_frame, text="✉️ Email Address", padding="4")
+        f_email.grid(row=1, column=3, sticky=(tk.W, tk.E), padx=3, pady=2)
+        f_email.columnconfigure(0, weight=1)
+        self.curr_email_entry = tk.Entry(f_email, font=('Consolas', 10, 'bold'), bg='#1e293b', fg='#c084fc', relief=tk.FLAT, bd=2)
+        self.curr_email_entry.pack(fill=tk.X, expand=True)
         self.curr_email_entry.insert(0, "-")
         self.curr_email_entry.config(state='readonly')
-        
-        # Row 2: Extended Account Info (OTP Code, Birthday, 2FA Key, Task ID)
-        r2_frame = ttk.Frame(task_frame)
-        r2_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(r2_frame, text="🔑 OTP Code:").pack(side=tk.LEFT, padx=(2, 2))
-        self.curr_code_entry = ttk.Entry(r2_frame, width=12, font=('Consolas', 9, 'bold'), foreground='#4ec9b0')
-        self.curr_code_entry.pack(side=tk.LEFT, padx=(0, 8))
+
+        # Row 2: Secondary Account Parameters (OTP Code, Birthday, 2FA Key, Task ID)
+        # 5. OTP Code
+        f_code = ttk.LabelFrame(task_frame, text="🔑 OTP Code", padding="3")
+        f_code.grid(row=2, column=0, sticky=(tk.W, tk.E), padx=3, pady=3)
+        self.curr_code_entry = tk.Entry(f_code, font=('Consolas', 9, 'bold'), bg='#1e293b', fg='#2dd4bf', relief=tk.FLAT, bd=1)
+        self.curr_code_entry.pack(fill=tk.X, expand=True)
         self.curr_code_entry.insert(0, "-")
         self.curr_code_entry.config(state='readonly')
-        
-        ttk.Label(r2_frame, text="🎂 Birthday:").pack(side=tk.LEFT, padx=(2, 2))
-        self.curr_bday_entry = ttk.Entry(r2_frame, width=14, font=('Consolas', 9))
-        self.curr_bday_entry.pack(side=tk.LEFT, padx=(0, 8))
+
+        # 6. Birthday
+        f_bday = ttk.LabelFrame(task_frame, text="🎂 Birthday", padding="3")
+        f_bday.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=3, pady=3)
+        self.curr_bday_entry = tk.Entry(f_bday, font=('Consolas', 9), bg='#1e293b', fg='#f472b6', relief=tk.FLAT, bd=1)
+        self.curr_bday_entry.pack(fill=tk.X, expand=True)
         self.curr_bday_entry.insert(0, "-")
         self.curr_bday_entry.config(state='readonly')
-        
-        ttk.Label(r2_frame, text="🔐 2FA Key:").pack(side=tk.LEFT, padx=(2, 2))
-        self.curr_twofa_entry = ttk.Entry(r2_frame, width=18, font=('Consolas', 9))
-        self.curr_twofa_entry.pack(side=tk.LEFT, padx=(0, 8))
+
+        # 7. 2FA Key
+        f_twofa = ttk.LabelFrame(task_frame, text="🔐 2FA Key", padding="3")
+        f_twofa.grid(row=2, column=2, sticky=(tk.W, tk.E), padx=3, pady=3)
+        self.curr_twofa_entry = tk.Entry(f_twofa, font=('Consolas', 9), bg='#1e293b', fg='#60a5fa', relief=tk.FLAT, bd=1)
+        self.curr_twofa_entry.pack(fill=tk.X, expand=True)
         self.curr_twofa_entry.insert(0, "-")
         self.curr_twofa_entry.config(state='readonly')
-        
-        ttk.Label(r2_frame, text="🆔 Task ID:").pack(side=tk.LEFT, padx=(2, 2))
-        self.curr_taskid_entry = ttk.Entry(r2_frame, width=14, font=('Consolas', 9))
-        self.curr_taskid_entry.pack(side=tk.LEFT, padx=(0, 8))
+
+        # 8. Task ID
+        f_taskid = ttk.LabelFrame(task_frame, text="🆔 Task ID", padding="3")
+        f_taskid.grid(row=2, column=3, sticky=(tk.W, tk.E), padx=3, pady=3)
+        self.curr_taskid_entry = tk.Entry(f_taskid, font=('Consolas', 9), bg='#1e293b', fg='#94a3b8', relief=tk.FLAT, bd=1)
+        self.curr_taskid_entry.pack(fill=tk.X, expand=True)
         self.curr_taskid_entry.insert(0, "-")
         self.curr_taskid_entry.config(state='readonly')
-        
+
         # Row 3: Action & Quick Copy Buttons
         r3_frame = ttk.Frame(task_frame)
-        r3_frame.pack(fill=tk.X, pady=(0, 2))
+        r3_frame.grid(row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=(4, 2))
         
         ttk.Button(r3_frame, text="📋 Copy All Account Info", command=self.copy_current_task_combo, width=22).pack(side=tk.LEFT, padx=(2, 4))
         ttk.Button(r3_frame, text="👤:🔒 User:Pass", command=self.copy_user_pass, width=14).pack(side=tk.LEFT, padx=3)
         ttk.Button(r3_frame, text="✉️:🔑 Email:Code", command=self.copy_email_code, width=16).pack(side=tk.LEFT, padx=3)
+        ttk.Button(r3_frame, text="🔒 Pass Only", command=self.copy_pass_only, width=13).pack(side=tk.LEFT, padx=3)
         ttk.Button(r3_frame, text="🔑 Code Only", command=self.copy_code_only, width=13).pack(side=tk.LEFT, padx=3)
         
         # === Log ===
@@ -421,6 +439,15 @@ class InstagramAutomationController:
         self.root.clipboard_clear()
         self.root.clipboard_append(code)
         self.log(f"📋 Copied OTP Code to clipboard: {code}", 'info')
+
+    def copy_pass_only(self):
+        pwd = self.curr_pass_entry.get().strip()
+        if not pwd or pwd == "-":
+            messagebox.showinfo("No Password", "No password has been set for the current task.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(pwd)
+        self.log(f"📋 Copied Password to clipboard: {pwd}", 'info')
 
     def setup_version_tab(self, parent):
         """Construct the Version & Updates inspection tab"""
