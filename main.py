@@ -70,6 +70,7 @@ class InstagramAutomationController:
         self.ldplayer_path = tk.StringVar(value="C:\\LDPlayer\\LDPlayer9\\dnplayer.exe")
         self.instance_name = tk.StringVar(value="LDPlayer")
         self.instance_index = tk.StringVar(value="0")
+        self.default_password = tk.StringVar(value="")
         self.auto_mode = tk.BooleanVar(value=True)
         self.headless_mode = tk.BooleanVar(value=False)
         self._config_loaded = False
@@ -82,6 +83,7 @@ class InstagramAutomationController:
         self._bind_auto_save(self.ldplayer_path)
         self._bind_auto_save(self.instance_name)
         self._bind_auto_save(self.instance_index)
+        self._bind_auto_save(self.default_password)
         self._bind_auto_save(self.auto_mode)
         self._bind_auto_save(self.headless_mode)
         
@@ -175,9 +177,11 @@ class InstagramAutomationController:
         ttk.Label(settings_frame, text="Index:").grid(row=2, column=2, sticky=tk.W, padx=5)
         ttk.Entry(settings_frame, textvariable=self.instance_index, width=10).grid(row=2, column=3, padx=5, sticky=tk.W)
         
-        # Options
-        ttk.Checkbutton(settings_frame, text="🤖 Auto Mode", variable=self.auto_mode).grid(row=3, column=0, padx=5)
-        ttk.Checkbutton(settings_frame, text="🖥️ Headless Mode", variable=self.headless_mode).grid(row=3, column=1, padx=5)
+        # Options & Custom Password
+        ttk.Label(settings_frame, text="Password (opt):").grid(row=3, column=0, sticky=tk.W, padx=5)
+        ttk.Entry(settings_frame, textvariable=self.default_password, width=20).grid(row=3, column=1, padx=5, sticky=tk.W)
+        ttk.Checkbutton(settings_frame, text="🤖 Auto Mode", variable=self.auto_mode).grid(row=3, column=2, padx=5)
+        ttk.Checkbutton(settings_frame, text="🖥️ Headless", variable=self.headless_mode).grid(row=3, column=3, padx=5)
         
         # === Controls ===
         control_frame = ttk.Frame(dashboard_tab)
@@ -710,6 +714,7 @@ class InstagramAutomationController:
                         self.ldplayer_path.set(os.path.normpath(saved_path))
                     self.instance_name.set(config.get('instance_name', 'LDPlayer'))
                     self.instance_index.set(config.get('instance_index', '0'))
+                    self.default_password.set(config.get('default_password', ''))
                     self.auto_mode.set(config.get('auto_mode', True))
                     self.headless_mode.set(config.get('headless_mode', False))
                     loaded = True
@@ -734,6 +739,7 @@ class InstagramAutomationController:
                 'ldplayer_path': self.ldplayer_path.get(),
                 'instance_name': self.instance_name.get(),
                 'instance_index': self.instance_index.get(),
+                'default_password': self.default_password.get(),
                 'auto_mode': self.auto_mode.get(),
                 'headless_mode': self.headless_mode.get()
             }
@@ -916,8 +922,12 @@ class InstagramAutomationController:
                     continue
                 
                 self.current_task = task
+                cfg_pwd = self.default_password.get().strip() if hasattr(self, 'default_password') else ''
                 pwd_raw = str(task.get('password', '')).strip()
-                if not pwd_raw or len(pwd_raw) < 6:
+                if cfg_pwd:
+                    pwd_raw = cfg_pwd
+                    task['password'] = pwd_raw
+                elif not pwd_raw or len(pwd_raw) < 6:
                     import random, string
                     seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
                     pwd_raw = f"Insta_{seed}9"
@@ -945,12 +955,12 @@ class InstagramAutomationController:
                 # Update UI Task Frame with ALL account info
                 self.update_current_task_ui(**self.current_task_state)
                 
-                self.log(f"📦 Successfully fetched task credentials from EasyEarn (Unmasked):", 'success')
-                self.log(f"   👤 Login / User : {login_val}", 'info')
-                self.log(f"   📝 Full Name    : {name_val}", 'info')
-                self.log(f"   🔒 Password     : {pwd_raw}", 'info')
-                self.log(f"   ✉️ Email        : {email_val}", 'info')
-                self.log(f"   🎂 Birthday     : {bday_val}", 'info')
+                self.log(f"📦 Active Task Credentials Ready (Unmasked):", 'success')
+                self.log(f"   👤 Login / User : {login_val} (From EasyEarn)", 'info')
+                self.log(f"   🔒 Password     : {pwd_raw} (From EasyEarn)", 'info')
+                self.log(f"   📝 Full Name    : {name_val} (From EasyEarn)", 'info')
+                self.log(f"   ✉️ Email        : {email_val} (From EasyEarn)", 'info')
+                self.log(f"   🎂 Birthday     : {bday_val} (Age 21+)", 'info')
                 self.log(f"   🆔 Task ID      : {task_id_val}", 'info')
                 
                 # Step 3: Ensure LDPlayer is ready before proceeding
@@ -1021,7 +1031,7 @@ class InstagramAutomationController:
                     
                     # Generate and submit final report on EasyEarn
                     self.log("📤 Submitting final completion report to EasyEarn...", 'info')
-                    if self.easyearn.submit_report():
+                    if self.easyearn.submit_report(account_data=self.current_task_state):
                         self.current_task_state['step'] = '🎉 Task Completed'
                         self.update_current_task_ui(**self.current_task_state)
                         self.log("✅ Task completed successfully!", 'success')

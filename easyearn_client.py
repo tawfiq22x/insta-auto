@@ -10,6 +10,18 @@ from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
+def decode_cloudflare_email(cf_hex: str) -> str:
+    """Deobfuscate Cloudflare protected email addresses encoded in data-cfemail"""
+    if not cf_hex or len(cf_hex) < 4:
+        return ""
+    try:
+        cf_hex = cf_hex.strip()
+        k = int(cf_hex[:2], 16)
+        return ''.join(chr(int(cf_hex[i:i+2], 16) ^ k) for i in range(2, len(cf_hex), 2))
+    except Exception:
+        return ""
+
+
 class EasyEarnClient:
     """Selenium Client for visually interacting with EasyEarn.cash in the browser"""
     
@@ -260,13 +272,13 @@ class EasyEarnClient:
             return None
             
     def _extract_task_data(self) -> Dict:
-        """Read data from the task page, accurately extracting all fields from EasyEarn FIRST before feeding to Instagram"""
+        """Read data from the task page, accurately extracting all fields (login, password, first_name, email) from EasyEarn"""
         data = {}
         import re
         import random
         import string
 
-        # Polling loop: allow dynamic EasyEarn elements to render completely
+        # Polling loop: allow dynamic EasyEarn elements and Cloudflare to render completely
         for attempt in range(8):
             try:
                 current_url = self.driver.current_url
@@ -274,96 +286,123 @@ class EasyEarnClient:
                 if match:
                     self.task_id = match.group(1)
 
-                # 1. Direct extract from exact EasyEarn field IDs: #field-login, #field-password, etc.
+                # 1. Primary extraction via in-page JavaScript targeting EasyEarn's exact .data-row & #field-* layout
+                js_extract = self.driver.execute_script("""
+                    var res = {};
+                    
+                    function decodeCf(hex) {
+                        if (!hex || hex.length < 4) return '';
+                        try {
+                            var k = parseInt(hex.substr(0, 2), 16);
+                            var out = '';
+                            for (var i = 2; i < hex.length; i += 2) {
+                                out += String.fromCharCode(parseInt(hex.substr(i, 2), 16) ^ k);
+                            }
+                            return out;
+                        } catch(e) { return ''; }
+                    }
+
+                    function cleanVal(el) {
+                        if (!el) return '';
+                        var cf = el.querySelector('.__cf_email__');
+                        if (cf && cf.getAttribute('data-cfemail')) {
+                            var dec = decodeCf(cf.getAttribute('data-cfemail'));
+                            if (dec && dec.indexOf('@') !== -1) return dec;
+                        }
+                        var cfDirect = el.getAttribute('data-cfemail');
+                        if (cfDirect) {
+                            var dec2 = decodeCf(cfDirect);
+                            if (dec2 && dec2.indexOf('@') !== -1) return dec2;
+                        }
+                        var txt = (el.innerText || el.textContent || el.value || '').trim();
+                        if (txt.indexOf('[email') !== -1) {
+                            var anyCf = el.querySelector('[data-cfemail]');
+                            if (anyCf) return decodeCf(anyCf.getAttribute('data-cfemail'));
+                        }
+                        return txt;
+                    }
+
+                    // A. Check exact EasyEarn field IDs (#field-login, #field-password, #field-first_name, #field-email)
+                    var keys = ['login', 'password', 'first_name', 'email'];
+                    keys.forEach(function(k) {
+                        var el = document.getElementById('field-' + k);
+                        if (el) {
+                            var v = cleanVal(el);
+                            if (v && v.indexOf('[email') === -1) res[k] = v;
+                        }
+                    });
+
+                    // B. Check .data-row elements (.data-label + .data-value)
+                    var rows = document.querySelectorAll('.data-row');
+                    rows.forEach(function(row) {
+                        var labelEl = row.querySelector('.data-label');
+                        var valEl = row.querySelector('.data-value');
+                        if (labelEl && valEl) {
+                            var lbl = labelEl.innerText.toLowerCase().trim();
+                            var v = cleanVal(valEl);
+                            if (v && v.indexOf('[email') === -1) {
+                                if (lbl.indexOf('login') !== -1 || lbl.indexOf('user') !== -1) res.login = v;
+                                else if (lbl.indexOf('pass') !== -1) res.password = v;
+                                else if (lbl.indexOf('name') !== -1) res.first_name = v;
+                                else if (lbl.indexOf('mail') !== -1) res.email = v;
+                            }
+                        }
+                    });
+
+                    // C. Fallback to global JS objects if defined
+                    if (typeof gen !== 'undefined') {
+                        if (!res.login && gen.login) res.login = gen.login;
+                        if (!res.password && gen.password) res.password = gen.password;
+                        if (!res.first_name && gen.first_name) res.first_name = gen.first_name;
+                        if (!res.email && gen.email) res.email = gen.email;
+                    }
+                    if (typeof taskData !== 'undefined') {
+                        if (!res.login && taskData.login) res.login = taskData.login;
+                        if (!res.password && taskData.password) res.password = taskData.password;
+                        if (!res.email && taskData.email) res.email = taskData.email;
+                        if (!res.first_name && taskData.first_name) res.first_name = taskData.first_name;
+                    }
+
+                    return res;
+                """)
+
+                if js_extract and isinstance(js_extract, dict):
+                    for k, v in js_extract.items():
+                        if v and (k not in data or not data[k]):
+                            data[k] = str(v).strip()
+
+                # 2. Python Selenium DOM fallback for any remaining missing fields
                 field_keys = ['login', 'password', 'first_name', 'email']
                 for key in field_keys:
-                    if key not in data or not data[key]:
+                    if key not in data or not data[key] or '[email' in data[key]:
                         try:
                             el = self.driver.find_element(By.ID, f"field-{key}")
+                            # Check for Cloudflare email element inside
+                            cf_elements = el.find_elements(By.CLASS_NAME, "__cf_email__")
+                            if cf_elements:
+                                cf_hex = cf_elements[0].get_attribute('data-cfemail') or ''
+                                decoded = decode_cloudflare_email(cf_hex)
+                                if decoded:
+                                    data[key] = decoded
+                                    continue
+                            
                             val = (el.text or el.get_attribute('innerText') or el.get_attribute('value') or '').strip()
-                            if val:
+                            if val and '[email' not in val:
                                 data[key] = val
                         except Exception:
                             pass
 
-                # 2. Extract from page JavaScript variables if present
-                if len(data) < 4:
-                    try:
-                        js_data = self.driver.execute_script("""
-                            var res = {};
-                            if (typeof gen !== 'undefined') {
-                                res.login = gen.login || '';
-                                res.password = gen.password || '';
-                                res.first_name = gen.first_name || '';
-                                res.email = gen.email || '';
-                            }
-                            if (typeof taskData !== 'undefined') {
-                                res.login = res.login || taskData.login || '';
-                                res.password = res.password || taskData.password || '';
-                                res.email = res.email || taskData.email || '';
-                            }
-                            return res;
-                        """)
-                        if js_data:
-                            for k, v in js_data.items():
-                                if v and (k not in data or not data[k]):
-                                    data[k] = str(v).strip()
-                    except Exception:
-                        pass
-
-                # 3. Extract from copy buttons (EasyEarn commonly uses [data-clipboard-text])
-                if len(data) < 4:
-                    try:
-                        copy_elems = self.driver.find_elements(By.CSS_SELECTOR, "[data-clipboard-text], [data-text], [data-copy]")
-                        for el in copy_elems:
-                            c_text = (el.get_attribute("data-clipboard-text") or el.get_attribute("data-text") or el.get_attribute("data-copy") or '').strip()
-                            if not c_text:
-                                continue
-                            try:
-                                parent_text = (el.find_element(By.XPATH, "./..").text or '').lower()
-                            except:
-                                parent_text = ''
-                            el_id = (el.get_attribute('id') or '').lower()
-                            el_class = (el.get_attribute('class') or '').lower()
-
-                            if ('pass' in parent_text or 'pass' in el_id or 'pass' in el_class) and 'password' not in data:
-                                data['password'] = c_text
-                            elif ('login' in parent_text or 'user' in parent_text or 'login' in el_id) and 'login' not in data:
-                                data['login'] = c_text
-                            elif ('mail' in parent_text or '@' in c_text or 'email' in el_id) and 'email' not in data:
-                                data['email'] = c_text
-                            elif ('name' in parent_text or 'first_name' in el_id) and 'first_name' not in data:
-                                data['first_name'] = c_text
-                    except Exception:
-                        pass
-
-                # 4. Fallback CSS selectors
-                for key in field_keys:
-                    if key not in data or not data[key]:
-                        selectors = [
-                            f"#{key}",
-                            f"input[name='{key}']",
-                            f"[data-field='{key}']",
-                            f".field-{key}"
-                        ]
-                        for sel in selectors:
-                            try:
-                                elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                                if elements:
-                                    val = (elements[0].text or elements[0].get_attribute('value') or elements[0].get_attribute('innerText') or '').strip()
-                                    if val:
-                                        data[key] = val
-                                        break
-                            except:
-                                pass
-
-                # Check if we have gathered all essential fields
-                if data.get('login') and data.get('email') and data.get('password'):
+                # If all 4 key fields are gathered, break immediately
+                if data.get('login') and data.get('password') and data.get('first_name') and data.get('email') and '[email' not in data.get('email', ''):
+                    break
+                
+                # If at least login, password, and valid email are gathered, break
+                if data.get('login') and data.get('password') and data.get('email') and '[email' not in data.get('email', ''):
                     break
 
             except Exception as e:
                 pass
-            time.sleep(1)
+            time.sleep(0.5)
 
         # Clean all string values
         for k in list(data.keys()):
@@ -375,17 +414,33 @@ class EasyEarnClient:
         if not data.get('birthday'):
             data['birthday'] = "1999-05-14"
 
-        # Guarantee a valid password if EasyEarn didn't provide an explicit one
+        # Check password: prioritize EasyEarn's password if provided
         if not data.get('password'):
             seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-            generated_pwd = f"Acc_{seed}9"
-            data['password'] = generated_pwd
-            self.log(f"ℹ️ Auto-generated secure password for Instagram: {data['password']}", "info")
+            data['password'] = f"Acc_{seed}9"
+            self.log("ℹ️ No password on task page, auto-generated secure password.", "info")
 
-        # Guarantee a valid first name
-        if not data.get('first_name') and data.get('login'):
-            clean_name = re.sub(r'[^a-zA-Z]', '', data['login'])
-            data['first_name'] = clean_name.capitalize() if clean_name else "Alex"
+        # Check first_name: prioritize EasyEarn's first_name if provided
+        if not data.get('first_name'):
+            email_val = data.get('email', '')
+            found_name = ""
+            if email_val and '@' in email_val:
+                prefix = email_val.split('@')[0].lower()
+                clean_chars = re.sub(r'[^a-z]', '', prefix)
+                if len(clean_chars) >= 6:
+                    found_name = clean_chars[:5].capitalize() + " " + clean_chars[5:12].capitalize()
+            
+            if not found_name:
+                clean_login = re.sub(r'[^a-zA-Z]', '', data.get('login', ''))
+                found_name = f"{clean_login[:5].capitalize()} Davis" if len(clean_login) >= 3 else "Alex Miller"
+            
+            data['first_name'] = found_name
+
+        self.log(f"📋 Extracted Task Credentials from EasyEarn:", "success")
+        self.log(f"   👤 Login      : {data.get('login')}", "info")
+        self.log(f"   🔒 Password   : {data.get('password')}", "info")
+        self.log(f"   📝 First Name : {data.get('first_name')}", "info")
+        self.log(f"   ✉️ Email      : {data.get('email')}", "info")
 
         self.task_data = data
         return data
@@ -539,23 +594,44 @@ class EasyEarnClient:
             self.log(f"Submit 2FA error: {e}", "error")
             return None
             
-    def submit_report(self) -> bool:
+    def submit_report(self, account_data: Optional[Dict] = None) -> bool:
         """Submit the final report to complete the task using EasyEarn's buildAndSubmitReport"""
         if self.stop_requested:
             return False
         try:
             self.log("📤 Submitting task completion report to EasyEarn...", "info")
-            script = """
-            if (typeof buildAndSubmitReport === 'function') {
+            data = account_data or self.task_data or {}
+            pwd = str(data.get('password', '')).replace("'", "\\'")
+            user = str(data.get('login', '')).replace("'", "\\'")
+            twofa = str(data.get('twofa', '')).replace("'", "\\'")
+
+            script = f"""
+            var pwd = '{pwd}';
+            var user = '{user}';
+            var twofa = '{twofa}';
+
+            // Auto-fill any input fields in report form if present
+            var pwdInputs = document.querySelectorAll("input[type='password'], input[name='password'], #password, #accountPassword, #userPassword, input[name='report_password']");
+            pwdInputs.forEach(function(el) {{ if (el && pwd) el.value = pwd; }});
+
+            var userInputs = document.querySelectorAll("input[name='login'], input[name='username'], #username, #accountLogin");
+            userInputs.forEach(function(el) {{ if (el && user) el.value = user; }});
+
+            if (twofa && twofa !== '-') {{
+                var tfaInputs = document.querySelectorAll("input[name='twofa'], input[name='tfa'], #report2fa, #tfaKey");
+                tfaInputs.forEach(function(el) {{ if (el) el.value = twofa; }});
+            }}
+
+            if (typeof buildAndSubmitReport === 'function') {{
                 buildAndSubmitReport();
                 return true;
-            } else if (typeof goToStep === 'function') {
+            }} else if (typeof goToStep === 'function') {{
                 goToStep(3);
                 return true;
-            } else {
+            }} else {{
                 var form = document.getElementById('submitForm');
-                if (form) { form.submit(); return true; }
-            }
+                if (form) {{ form.submit(); return true; }}
+            }}
             return false;
             """
             result = self.driver.execute_script(script)

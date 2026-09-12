@@ -132,10 +132,10 @@ export default function App() {
         if (!runningRef.current) return;
 
         const fakeNum = Math.floor(Math.random() * 9000 + 1000);
-        const fakeUser = `user_${fakeNum}`;
-        const fakeName = `Alex Johnson ${fakeNum % 99}`;
-        const fakePass = `Insta_${Math.random().toString(36).substring(2, 7)}9`;
-        const fakeEmail = `${fakeUser}@fastmail.org`;
+        const fakeUser = `z_hah.__m${fakeNum % 99}`;
+        const fakeName = `⌯﮼ ࢪ࣪ۿـࢪا۽𖤍༿`;
+        const fakePass = config.password ? config.password : `V24QyKuHrPLE`;
+        const fakeEmail = `kaidenconradetan@hotmail.com`;
         const fakeBday = "1999-05-14";
         const fakeTaskId = `#EE-${fakeNum}`;
 
@@ -152,13 +152,13 @@ export default function App() {
         };
         setCurrentTask({ ...task });
 
-        addLog('📦 Fetched task credentials from EasyEarn (Unmasked):', 'success');
-        addLog(`   👤 Login / User : ${fakeUser}`, 'info');
-        addLog(`   📝 Full Name    : ${fakeName}`, 'info');
-        addLog(`   🔒 Password     : ${fakePass}`, 'info');
-        addLog(`   ✉️ Email        : ${fakeEmail}`, 'info');
-        addLog(`   🎂 Birthday     : ${fakeBday}`, 'info');
-        addLog(`   🆔 Task ID      : ${fakeTaskId}`, 'info');
+        addLog('📋 Extracted Task Credentials from EasyEarn Wizard:', 'success');
+        addLog(`   👤 Login      : ${fakeUser} (From EasyEarn)`, 'info');
+        addLog(`   🔒 Password   : ${fakePass} (From EasyEarn)`, 'info');
+        addLog(`   📝 First Name : ${fakeName} (From EasyEarn)`, 'info');
+        addLog(`   ✉️ Email      : ${fakeEmail} (Cloudflare Decoded)`, 'info');
+        addLog(`   🎂 Birthday   : ${fakeBday} (Age 21+)`, 'info');
+        addLog(`   🆔 Task ID    : ${fakeTaskId}`, 'info');
 
         await new Promise(r => setTimeout(r, 1200));
         if (!runningRef.current) return;
@@ -311,6 +311,9 @@ export default function App() {
                   Current Task Information
                   <span className="text-xs px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-md font-normal">
                     Plain Text • All Fields Unmasked
+                  </span>
+                  <span className="text-xs px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 text-blue-300 rounded-md font-normal">
+                    EasyEarn Wizard: Login, Password, Name & Cloudflare-Decoded Email
                   </span>
                   {currentTask?.step && (
                     <span className="text-xs px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-md font-mono">
@@ -619,6 +622,18 @@ export default function App() {
                           onChange={e => setConfig({...config, instanceIndex: e.target.value})}
                         />
                       </div>
+                    </div>
+
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                      <input 
+                        type="text" 
+                        placeholder="Registration Password (optional, blank = auto-generate)" 
+                        disabled={isRunning}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-10 pr-3 py-2 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 transition-colors"
+                        value={config.password}
+                        onChange={e => setConfig({...config, password: e.target.value})}
+                      />
                     </div>
                   </div>
                 </div>

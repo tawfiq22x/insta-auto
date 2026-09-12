@@ -273,8 +273,17 @@ class LDPlayerAutomation:
         except Exception:
             return ""
 
-    def find_text_coordinates(self, keywords, xml_str: Optional[str] = None) -> Optional[Tuple[int, int]]:
-        """Find center coordinates of an element containing any of the keywords"""
+    def find_text_coordinates(
+        self,
+        keywords,
+        xml_str: Optional[str] = None,
+        exact: bool = False,
+        min_y: int = 0,
+        max_y: Optional[int] = None,
+        exclude_ids: Optional[list] = None,
+        prefer_clickable: bool = False
+    ) -> Optional[Tuple[int, int]]:
+        """Find center coordinates of an element containing or matching any of the keywords with optional ID filtering"""
         import re
         import xml.etree.ElementTree as ET
         
@@ -292,27 +301,58 @@ class LDPlayerAutomation:
             xml_start = xml_str.find("<?xml")
             clean_xml = xml_str[xml_start:] if xml_start != -1 else xml_str
             root = ET.fromstring(clean_xml)
+            candidates = []
             for node in root.iter('node'):
                 node_text = (node.attrib.get('text', '') or '').strip().lower()
                 node_desc = (node.attrib.get('content-desc', '') or '').strip().lower()
+                res_id = (node.attrib.get('resource-id', '') or '').lower()
+                clickable = (node.attrib.get('clickable') == 'true') or ('button' in (node.attrib.get('class', '') or '').lower())
+
+                # Skip nodes matching exclude_ids (e.g. ['title', 'alerttitle', 'header'])
+                if exclude_ids and any(ex.lower() in res_id for ex in exclude_ids):
+                    continue
+
                 bounds_str = node.attrib.get('bounds', '')
                 for kw in keywords:
-                    if kw.lower() in node_text or kw.lower() in node_desc:
+                    kw_lower = kw.lower().strip()
+                    matched = False
+                    if exact:
+                        matched = (node_text == kw_lower or node_desc == kw_lower)
+                    else:
+                        matched = (kw_lower in node_text or kw_lower in node_desc)
+
+                    if matched:
                         bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
                         if len(bounds_match) == 2:
                             x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
                             x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
-                            return ((x1 + x2) // 2, (y1 + y2) // 2)
+                            cx = (x1 + x2) // 2
+                            cy = (y1 + y2) // 2
+                            if cy >= min_y and (max_y is None or cy <= max_y):
+                                candidates.append((cx, cy, clickable))
+                                break
+
+            if candidates:
+                if prefer_clickable:
+                    clickables = [c for c in candidates if c[2]]
+                    if clickables:
+                        return (clickables[0][0], clickables[0][1])
+                return (candidates[0][0], candidates[0][1])
         except Exception:
             pass
 
         # 2. Fast regex fallback
         for kw in keywords:
-            pattern = rf'(?:text|content-desc)="[^"]*{re.escape(kw)}[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+            if exact:
+                pattern = rf'(?:text|content-desc)="{re.escape(kw)}"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
+            else:
+                pattern = rf'(?:text|content-desc)="[^"]*{re.escape(kw)}[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
             match = re.search(pattern, xml_str, re.IGNORECASE)
             if match:
                 x1, y1, x2, y2 = map(int, match.groups())
-                return ((x1 + x2) // 2, (y1 + y2) // 2)
+                cy = (y1 + y2) // 2
+                if cy >= min_y and (max_y is None or cy <= max_y):
+                    return ((x1 + x2) // 2, cy)
 
         return None
 
@@ -533,9 +573,20 @@ class LDPlayerAutomation:
         self._clear_text_field(25)
         time.sleep(0.06)
         
-        # Type text purely via ADB keystrokes (identical design to the email field)
-        print(f"⌨️ Typing input text: {text}")
-        self._type_text(text)
+        # Type text cleanly: pure ASCII uses direct keyevents, Unicode/Arabic uses clipboard paste
+        is_pure_ascii = all(ord(c) < 128 for c in text)
+        if is_pure_ascii:
+            print(f"⌨️ Typing input text: {text}")
+            self._type_text(text)
+        else:
+            print(f"📋 Pasting Unicode/Arabic text: {text}")
+            self.set_clipboard(text)
+            time.sleep(0.08)
+            # KEYCODE_PASTE (279)
+            self._run_adb_args(["shell", "input", "keyevent", "279"])
+            time.sleep(0.06)
+            # Ctrl+V fallback
+            self._run_adb_args(["shell", "input", "keyevent", "--meta", "113", "29"])
         time.sleep(0.12)
         
         # Dismiss soft keyboard cleanly with KEYCODE_BACK
@@ -554,7 +605,7 @@ class LDPlayerAutomation:
 
         w, h = self.get_screen_size()
 
-        # Priority 1: Check nodes located in the lower half of screen (the picker wheel)
+        # Priority 1: Check nodes located in picker zone (y >= 0.25 * h)
         try:
             xml_start = xml_str.find("<?xml")
             clean_xml = xml_str[xml_start:] if xml_start != -1 else xml_str
@@ -565,7 +616,7 @@ class LDPlayerAutomation:
                 bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
                 if len(bounds_match) == 2:
                     y1 = int(bounds_match[0][1])
-                    if y1 >= int(h * 0.45):
+                    if y1 >= int(h * 0.25):
                         text = (node.attrib.get('text', '') or '').strip()
                         desc = (node.attrib.get('content-desc', '') or '').strip()
                         for val in [text, desc]:
@@ -575,7 +626,6 @@ class LDPlayerAutomation:
                                 if 1900 <= iy <= 2035:
                                     picker_years.append(iy)
             if picker_years:
-                # Return the year closest to center of picker
                 return picker_years[0]
         except Exception:
             pass
@@ -603,13 +653,14 @@ class LDPlayerAutomation:
         if not xml_str:
             xml_str = self.dump_ui()
 
-        # 1. Search for 4-digit year element in XML strictly located in lower half (picker zone)
+        # 1. Search for NumberPicker or DatePicker elements in XML
         try:
             xml_start = xml_str.find("<?xml")
             clean_xml = xml_str[xml_start:] if xml_start != -1 else xml_str
             root = ET.fromstring(clean_xml)
 
-            # Check for year text or content-desc in picker region (y >= 0.45 * h)
+            # Look for 4-digit year element in XML to locate exact year column
+            year_node_bounds = None
             for node in root.iter('node'):
                 text = (node.attrib.get('text', '') or '').strip()
                 desc = (node.attrib.get('content-desc', '') or '').strip()
@@ -617,17 +668,12 @@ class LDPlayerAutomation:
                     bounds_str = node.attrib.get('bounds', '')
                     bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
                     if len(bounds_match) == 2:
-                        x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
-                        x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
-                        if y1 >= int(h * 0.45):
-                            year_x = (x1 + x2) // 2
-                            year_y = (y1 + y2) // 2
-                            drag_dist = max(180, int(h * 0.12))
-                            y_top = max(int(h * 0.58), year_y - drag_dist)
-                            y_bottom = min(int(h * 0.90), year_y + drag_dist)
-                            return (year_x, year_y, y_top, y_bottom)
+                        y1 = int(bounds_match[0][1])
+                        if y1 >= int(h * 0.25):
+                            year_node_bounds = (int(bounds_match[0][0]), int(bounds_match[0][1]), int(bounds_match[1][0]), int(bounds_match[1][1]))
+                            break
 
-            # Check for NumberPicker or DatePicker elements
+            # Find all NumberPicker columns
             pickers = []
             for node in root.iter('node'):
                 node_class = (node.attrib.get('class', '') or '').lower()
@@ -638,37 +684,146 @@ class LDPlayerAutomation:
                     if len(bounds_match) == 2:
                         x1, y1 = int(bounds_match[0][0]), int(bounds_match[0][1])
                         x2, y2 = int(bounds_match[1][0]), int(bounds_match[1][1])
-                        if 30 < (x2 - x1) < int(w * 0.60) and (y2 - y1) > 60 and y1 >= int(h * 0.45):
+                        if 30 < (x2 - x1) < int(w * 0.60) and (y2 - y1) > 60 and y1 >= int(h * 0.25):
                             pickers.append((x1, y1, x2, y2))
 
             if pickers:
-                # Rightmost picker is Year in LTR / Western / Latin layouts
-                pickers.sort(key=lambda p: p[0])
-                p = pickers[-1]
-                year_x = (p[0] + p[2]) // 2
-                year_y = (p[1] + p[3]) // 2
-                y_top = p[1] + int((p[3] - p[1]) * 0.18)
-                y_bottom = p[3] - int((p[3] - p[1]) * 0.18)
+                # Deduplicate pickers with overlapping x coordinates
+                unique_pickers = []
+                for p in sorted(pickers, key=lambda p: p[0]):
+                    if not unique_pickers or abs(p[0] - unique_pickers[-1][0]) > 40:
+                        unique_pickers.append(p)
+
+                # If we found year_node_bounds, find which picker contains its X center
+                target_picker = None
+                if year_node_bounds:
+                    yn_cx = (year_node_bounds[0] + year_node_bounds[2]) // 2
+                    for p in unique_pickers:
+                        if p[0] <= yn_cx <= p[2]:
+                            target_picker = p
+                            break
+
+                # Otherwise default to the rightmost picker (Western/Android standard)
+                if not target_picker:
+                    target_picker = unique_pickers[-1]
+
+                year_x = (target_picker[0] + target_picker[2]) // 2
+                year_y = (target_picker[1] + target_picker[3]) // 2
+                drag_dist = max(140, int((target_picker[3] - target_picker[1]) * 0.25))
+                y_top = max(target_picker[1] + 30, year_y - drag_dist)
+                y_bottom = min(target_picker[3] - 30, year_y + drag_dist)
+                return (year_x, year_y, y_top, y_bottom)
+
+            # If no pickers found but year node exists
+            if year_node_bounds:
+                year_x = (year_node_bounds[0] + year_node_bounds[2]) // 2
+                year_y = (year_node_bounds[1] + year_node_bounds[3]) // 2
+                drag_dist = max(180, int(h * 0.12))
+                y_top = max(int(h * 0.35), year_y - drag_dist)
+                y_bottom = min(int(h * 0.90), year_y + drag_dist)
                 return (year_x, year_y, y_top, y_bottom)
         except Exception:
             pass
 
-        # 2. Geometric fallback for mobile portrait screen (wheels occupy lower portion)
-        # Year wheel is on the right (~78% width), middle vertical zone (~74% height)
+        # Geometric fallback: year wheel is in the right third of the dialog/picker area
         year_x = int(w * 0.78)
-        year_y = int(h * 0.74)
-        y_top = int(h * 0.62)
-        y_bottom = int(h * 0.86)
+        year_y = int(h * 0.58)
+        y_top = int(h * 0.45)
+        y_bottom = int(h * 0.70)
         return (year_x, year_y, y_top, y_bottom)
+
+    def confirm_date_picker(self, log_cb=None) -> bool:
+        """
+        Confirms the DatePicker dialog or bottom sheet ('SET' / 'Set' / 'Set date' / 'android:id/button1').
+        Guarantees that the positive confirmation button is clicked rather than dialog title headers.
+        """
+        def log(msg, level="info"):
+            if log_cb:
+                try: log_cb(msg, level)
+                except Exception: pass
+
+        w, h = self.get_screen_size()
+        xml = self.dump_ui()
+        import re, xml.etree.ElementTree as ET
+
+        # 1. Primary Check: android:id/button1 (The official positive button of any Android AlertDialog/DatePickerDialog)
+        try:
+            xml_start = xml.find("<?xml")
+            clean_xml = xml[xml_start:] if xml_start != -1 else xml
+            root = ET.fromstring(clean_xml)
+            for node in root.iter('node'):
+                res_id = (node.attrib.get('resource-id', '') or '').lower()
+                if 'button1' in res_id:
+                    bounds_str = node.attrib.get('bounds', '')
+                    bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                    if len(bounds_match) == 2:
+                        cx = (int(bounds_match[0][0]) + int(bounds_match[1][0])) // 2
+                        cy = (int(bounds_match[0][1]) + int(bounds_match[1][1])) // 2
+                        log(f"🎯 Tapped DatePicker confirm button (android:id/button1) at ({cx}, {cy})", "info")
+                        self._tap(cx, cy)
+                        time.sleep(0.4)
+                        return True
+        except Exception:
+            pass
+
+        # 2. Check for button with text "SET", "Set", "Set date", "Done", "OK" that is NOT a title/header
+        try:
+            xml_start = xml.find("<?xml")
+            clean_xml = xml[xml_start:] if xml_start != -1 else xml
+            root = ET.fromstring(clean_xml)
+            for node in root.iter('node'):
+                text = (node.attrib.get('text', '') or '').strip()
+                desc = (node.attrib.get('content-desc', '') or '').strip()
+                res_id = (node.attrib.get('resource-id', '') or '').lower()
+
+                # STRICTLY skip dialog titles or header text
+                if 'title' in res_id or 'header' in res_id or 'alerttitle' in res_id:
+                    continue
+
+                for label in [text, desc]:
+                    if label.upper() in ["SET", "SET DATE", "DONE", "OK", "CONFIRM", "SAVE", "ГОТОВО", "УСТАНОВИТЬ"]:
+                        bounds_str = node.attrib.get('bounds', '')
+                        bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
+                        if len(bounds_match) == 2:
+                            cx = (int(bounds_match[0][0]) + int(bounds_match[1][0])) // 2
+                            cy = (int(bounds_match[0][1]) + int(bounds_match[1][1])) // 2
+                            # Must be below the top third of screen
+                            if cy >= int(h * 0.35):
+                                log(f"🎯 Tapped DatePicker confirmation button '{label}' at ({cx}, {cy})", "info")
+                                self._tap(cx, cy)
+                                time.sleep(0.4)
+                                return True
+        except Exception:
+            pass
+
+        # 3. Fast regex check for exact button text="SET" or text="Set"
+        match_btn = re.search(r'text="(?i:set|set date|done|ok)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+        if match_btn:
+            x1, y1, x2, y2 = map(int, match_btn.groups())
+            cy = (y1 + y2) // 2
+            if cy >= int(h * 0.35):
+                cx = (x1 + x2) // 2
+                log(f"🎯 Regex matched DatePicker confirm button at ({cx}, {cy})", "info")
+                self._tap(cx, cy)
+                time.sleep(0.4)
+                return True
+
+        # 4. Fallback: Standard Android dialog positive button location (~78% width, dialog button area)
+        log("👉 Trying standard DatePicker positive button fallback...", "info")
+        self._tap(int(w * 0.78), int(h * 0.65))
+        time.sleep(0.2)
+        self._run_adb_args(["shell", "input", "keyevent", "66"]) # KEYCODE_ENTER
+        time.sleep(0.4)
+        return False
 
     def set_birthday(self, log_cb=None, account_data: Optional[dict] = None) -> bool:
         """
         Rock-solid birthday automation for Instagram:
-        1. Ensures the DatePicker bottom-sheet/dialog is open (taps date field if needed).
+        1. Ensures the DatePicker bottom-sheet/dialog is open (taps 'Set date' or date field if needed).
         2. Detects Year column & current displayed year in picker zone.
         3. Supports direct EditText entry if native NumberPicker is present.
-        4. Performs high-velocity physics flings (110ms) DOWN to roll year wheel back ~27 years (to 1999).
-        5. Confirms any DatePicker dialog ('Set' / 'OK' / 'Done' / android:id/button1).
+        4. Performs smooth physics flings DOWN to roll year wheel back to adult age (~1999).
+        5. Confirms DatePicker dialog via confirm_date_picker ('SET' / 'OK' / android:id/button1), avoiding title header false matches.
         6. Taps primary 'Next' / 'Continue' button with fallback coordinates & keyevent 66.
         7. Handles Instagram age confirmation dialog ('Are you X years old?' / 'Confirm your age').
         8. Dismisses under-age error dialogs if encountered and retries.
@@ -699,8 +854,8 @@ class LDPlayerAutomation:
         xml = self.dump_ui()
 
         # Step 1: Ensure DatePicker is open.
-        # If no pickers/wheels or 4-digit years found in lower half, tap the date field in upper half
-        has_picker_in_lower_half = False
+        # Check if pickers, dialog positive button (button1), or 4-digit years exist in picker zone
+        has_picker_open = False
         import re, xml.etree.ElementTree as ET
         try:
             xml_start = xml.find("<?xml")
@@ -711,25 +866,26 @@ class LDPlayerAutomation:
                 bounds_match = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
                 if len(bounds_match) == 2:
                     y1 = int(bounds_match[0][1])
-                    if y1 >= int(h * 0.45):
+                    if y1 >= int(h * 0.25):
                         n_cls = (node.attrib.get('class', '') or '').lower()
                         n_id = (node.attrib.get('resource-id', '') or '').lower()
                         n_text = (node.attrib.get('text', '') or '')
-                        if 'picker' in n_cls or 'wheel' in n_cls or 'picker' in n_id or re.search(r'\b(19\d{2}|20\d{2})\b', n_text):
-                            has_picker_in_lower_half = True
+                        if 'picker' in n_cls or 'wheel' in n_cls or 'picker' in n_id or 'button1' in n_id or re.search(r'\b(19\d{2}|20\d{2})\b', n_text):
+                            has_picker_open = True
                             break
         except Exception:
             pass
 
-        if not has_picker_in_lower_half:
-            log("👉 Date picker not open yet. Tapping date display field to open wheel...", "info")
+        if not has_picker_open:
+            log("👉 Date picker not open yet. Tapping date display field to open picker...", "info")
             date_field_coords = self.find_text_coordinates([
+                "set date", "Set date", "SET DATE",
                 "january", "february", "march", "april", "may", "june",
                 "july", "august", "september", "october", "november", "december",
                 "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
-                "2026", "2025", "2024", "date of birth", "birthday"
-            ], xml_str=xml)
-            if date_field_coords and date_field_coords[1] < int(h * 0.45):
+                "2026", "2025", "2024", "2023", "2005", "date of birth", "birthday"
+            ], xml_str=xml, max_y=int(h * 0.50))
+            if date_field_coords:
                 self._tap(date_field_coords[0], date_field_coords[1])
             else:
                 self._tap(int(w * 0.50), int(h * 0.32))
@@ -752,86 +908,92 @@ class LDPlayerAutomation:
                     if len(bounds_match) == 2:
                         cx = (int(bounds_match[0][0]) + int(bounds_match[1][0])) // 2
                         cy = (int(bounds_match[0][1]) + int(bounds_match[1][1])) // 2
-                        if cy >= int(h * 0.45):
+                        if cy >= int(h * 0.25):
                             log(f"✍️ Direct year input detected at ({cx}, {cy}). Setting Year {target_year}...", "info")
                             self._tap(cx, cy)
                             time.sleep(0.15)
                             self._clear_text_field(6)
                             self._run_adb_args(["shell", "input", "text", str(target_year)])
                             time.sleep(0.2)
+                            # Unfocus by tapping slightly above
+                            self._tap(cx, max(50, cy - 120))
                             direct_entry_success = True
                             break
         except Exception:
             pass
 
-        # Step 3: Scrollable Wheel Automation with high-velocity flings
+        # Step 3: Scrollable Wheel Automation with smooth flings
         year_x, year_y, y_top, y_bottom = self.find_birthday_picker_info(xml)
         month_x = int(w * 0.22)
         day_x = int(w * 0.50)
 
-        # High-velocity fling helper: duration 110ms gives Android momentum to spin 8-12 items
-        def do_fling(x, y1, y2, duration_ms=110):
+        # Fling helper: duration 160ms gives good Android physics without overshooting
+        def do_fling(x, y1, y2, duration_ms=160):
             self._run_adb_args(["shell", "input", "swipe", str(x), str(y1), str(x), str(y2), str(duration_ms)])
-            time.sleep(0.12)
+            time.sleep(0.15)
 
         if not direct_entry_success:
             initial_year = self._get_displayed_year(xml)
             log(f"🔄 Rolling Year wheel at x={year_x} (initial detected: {initial_year or 'current'})...", "info")
 
             # Direction 1: Pull DOWN (from y_top to y_bottom) to decrease years towards target
-            # 5 fast flings will spin the wheel back 20-30 years
+            # 5 flings will spin the wheel back comfortably 20-30 years
             for _ in range(5):
-                do_fling(year_x, y_top, y_bottom, duration_ms=110)
+                do_fling(year_x, y_top, y_bottom, duration_ms=160)
 
-            # Tap center to stop momentum
+            # Tap center to settle wheel momentum
             self._tap(year_x, year_y)
             time.sleep(0.3)
 
             mid_check_xml = self.dump_ui()
             year_after_down = self._get_displayed_year(mid_check_xml)
 
-            # If wheel did not decrease or is still >= 2005, try scrolling UP
+            # If wheel did not decrease or is still >= 2005, try scrolling UP (in case inverted)
             if initial_year and year_after_down and year_after_down >= initial_year and year_after_down > 2004:
                 log("🔄 Wheel inverted. Flinging UP to reach adult years...", "info")
                 for _ in range(6):
-                    do_fling(year_x, y_bottom, y_top, duration_ms=110)
+                    do_fling(year_x, y_bottom, y_top, duration_ms=160)
                 self._tap(year_x, year_y)
                 time.sleep(0.3)
             elif not year_after_down or year_after_down > 2004:
                 # Additional flings downward to firmly ensure adult age
                 for _ in range(4):
-                    do_fling(year_x, y_top, y_bottom, duration_ms=110)
+                    do_fling(year_x, y_top, y_bottom, duration_ms=160)
                 self._tap(year_x, year_y)
                 time.sleep(0.3)
 
             # Also fling month and day once so the date looks completely natural
-            do_fling(month_x, y_top, y_bottom, duration_ms=150)
-            do_fling(day_x, y_top, y_bottom, duration_ms=150)
+            do_fling(month_x, y_top, y_bottom, duration_ms=160)
+            do_fling(day_x, y_top, y_bottom, duration_ms=160)
 
         # Allow wheel momentum to settle
+        time.sleep(0.3)
+
+        # Step 4: Confirm DatePicker Dialog ("SET" / "OK" / "Done" / android:id/button1)
+        log("👉 Confirming date selection in DatePicker ('Set' / 'OK')...", "info")
+        self.confirm_date_picker(log_cb=log)
         time.sleep(0.4)
 
-        # Step 4: Confirm DatePicker Dialog ("SET" / "OK" / "Done") if modal
-        log("👉 Confirming date selection in DatePicker...", "info")
-        # Tap Set/OK only if element actually exists on screen
-        dialog_confirmed = self.tap_text(["Set", "SET", "Ok", "OK", "Done", "DONE", "Confirm", "Save", "Установить", "Готово"], timeout=0.6)
-        if not dialog_confirmed:
-            # Check for native Android dialog positive button
-            post_wheel_xml = self.dump_ui()
-            if "android:id/button1" in post_wheel_xml:
-                coords = self.find_text_coordinates(["SET", "Set", "OK", "Ok"], xml_str=post_wheel_xml)
-                if coords:
-                    self._tap(coords[0], coords[1])
-        time.sleep(0.4)
+        # Check if DatePicker is still open; if so, confirm again with fallback
+        check_xml = self.dump_ui()
+        if "button1" in check_xml or "numberpicker" in check_xml.lower():
+            log("⚠️ DatePicker dialog still visible, tapping confirm again...", "warning")
+            self.confirm_date_picker(log_cb=log)
+            time.sleep(0.4)
 
         # Step 5: Tap primary 'Next' button on Birthday screen
         log("👉 Tapping 'Next' on Birthday screen...", "info")
-        next_coords = self.find_text_coordinates(["Next", "Continue", "Далее", "Siguiente", "Avançar"])
+        next_coords = self.find_text_coordinates(
+            ["Next", "Continue", "Далее", "Siguiente", "Avançar"],
+            min_y=int(h * 0.35),
+            exclude_ids=["title", "header", "alerttitle"],
+            prefer_clickable=True
+        )
         if next_coords:
             log(f"🎯 Tapping 'Next' at {next_coords}...", "info")
             self._tap(next_coords[0], next_coords[1])
         else:
-            # Tap Instagram standard Next position (above wheels at y=0.44 * h)
+            # Tap Instagram standard Next position (above wheels at y=0.44 * h or below picker)
             self._tap(int(w * 0.50), int(h * 0.44))
             time.sleep(0.2)
             self._tap(int(w * 0.50), int(h * 0.52))
@@ -855,10 +1017,10 @@ class LDPlayerAutomation:
             time.sleep(0.3)
             # Re-fling year wheel heavily downwards
             for _ in range(8):
-                do_fling(year_x, y_top, y_bottom, duration_ms=110)
+                do_fling(year_x, y_top, y_bottom, duration_ms=130)
             self._tap(year_x, year_y)
             time.sleep(0.3)
-            self.tap_text(["Set", "SET", "Ok", "OK"], timeout=0.6)
+            self.confirm_date_picker(log_cb=log)
             self.tap_text(["Next", "Continue"], timeout=0.8, fallback_ratio=(0.50, 0.44))
             self._run_adb_args(["shell", "input", "keyevent", "66"])
             time.sleep(1.0)
