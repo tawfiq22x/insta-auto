@@ -199,37 +199,83 @@ class InstagramAutomationController:
         ttk.Button(control_frame, text="🌐 Open Browser", command=self.manual_open_browser, width=15).grid(row=0, column=7, padx=4)
         
         # === Current Task ===
-        task_frame = ttk.LabelFrame(dashboard_tab, text="📋 Current Task (All Credentials: Login, Name, Password, Email)", padding="8")
+        task_frame = ttk.LabelFrame(dashboard_tab, text="📋 Current Task (All Account Information & Live Status)", padding="8")
         task_frame.grid(row=4, column=0, columnspan=5, sticky=(tk.W, tk.E), pady=4)
         
-        self.task_info = ttk.Label(task_frame, text="No active task (Waiting for next task from EasyEarn...)", font=('Arial', 10, 'bold'), foreground='#9cdcfe')
-        self.task_info.grid(row=0, column=0, columnspan=9, sticky=tk.W, pady=(0, 5))
+        # Row 0: Summary Banner & Live Step Progress
+        header_row = ttk.Frame(task_frame)
+        header_row.pack(fill=tk.X, pady=(0, 5))
         
-        ttk.Label(task_frame, text="👤 Login:").grid(row=1, column=0, sticky=tk.W, padx=(2, 2))
-        self.curr_login_entry = ttk.Entry(task_frame, width=16, font=('Consolas', 9))
-        self.curr_login_entry.grid(row=1, column=1, padx=(0, 6), sticky=tk.W)
+        self.task_info = ttk.Label(header_row, text="No active task (Waiting for next task from EasyEarn...)", font=('Arial', 9, 'bold'), foreground='#9cdcfe')
+        self.task_info.pack(side=tk.LEFT)
+        
+        self.task_step_badge = ttk.Label(header_row, text="[IDLE]", font=('Arial', 9, 'bold'), foreground='#d7ba7d')
+        self.task_step_badge.pack(side=tk.RIGHT)
+
+        # Row 1: Core Credentials (Login, Name, Password, Email)
+        r1_frame = ttk.Frame(task_frame)
+        r1_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        ttk.Label(r1_frame, text="👤 Login:").pack(side=tk.LEFT, padx=(2, 2))
+        self.curr_login_entry = ttk.Entry(r1_frame, width=15, font=('Consolas', 9))
+        self.curr_login_entry.pack(side=tk.LEFT, padx=(0, 8))
         self.curr_login_entry.insert(0, "-")
         self.curr_login_entry.config(state='readonly')
         
-        ttk.Label(task_frame, text="📝 Name:").grid(row=1, column=2, sticky=tk.W, padx=(2, 2))
-        self.curr_name_entry = ttk.Entry(task_frame, width=16, font=('Consolas', 9))
-        self.curr_name_entry.grid(row=1, column=3, padx=(0, 6), sticky=tk.W)
+        ttk.Label(r1_frame, text="📝 Name:").pack(side=tk.LEFT, padx=(2, 2))
+        self.curr_name_entry = ttk.Entry(r1_frame, width=15, font=('Consolas', 9))
+        self.curr_name_entry.pack(side=tk.LEFT, padx=(0, 8))
         self.curr_name_entry.insert(0, "-")
         self.curr_name_entry.config(state='readonly')
         
-        ttk.Label(task_frame, text="🔒 Pass:").grid(row=1, column=4, sticky=tk.W, padx=(2, 2))
-        self.curr_pass_entry = ttk.Entry(task_frame, width=16, font=('Consolas', 9))
-        self.curr_pass_entry.grid(row=1, column=5, padx=(0, 6), sticky=tk.W)
+        ttk.Label(r1_frame, text="🔒 Pass:").pack(side=tk.LEFT, padx=(2, 2))
+        self.curr_pass_entry = ttk.Entry(r1_frame, width=15, font=('Consolas', 9))
+        self.curr_pass_entry.pack(side=tk.LEFT, padx=(0, 8))
         self.curr_pass_entry.insert(0, "-")
         self.curr_pass_entry.config(state='readonly')
         
-        ttk.Label(task_frame, text="✉️ Email:").grid(row=1, column=6, sticky=tk.W, padx=(2, 2))
-        self.curr_email_entry = ttk.Entry(task_frame, width=28, font=('Consolas', 9))
-        self.curr_email_entry.grid(row=1, column=7, padx=(0, 6), sticky=(tk.W, tk.E))
+        ttk.Label(r1_frame, text="✉️ Email:").pack(side=tk.LEFT, padx=(2, 2))
+        self.curr_email_entry = ttk.Entry(r1_frame, width=28, font=('Consolas', 9))
+        self.curr_email_entry.pack(side=tk.LEFT, padx=(0, 2), fill=tk.X, expand=True)
         self.curr_email_entry.insert(0, "-")
         self.curr_email_entry.config(state='readonly')
         
-        ttk.Button(task_frame, text="📋 Copy (User:Pass:Email)", command=self.copy_current_task_combo, width=24).grid(row=1, column=8, padx=(4, 2), sticky=tk.E)
+        # Row 2: Extended Account Info (OTP Code, Birthday, 2FA Key, Task ID)
+        r2_frame = ttk.Frame(task_frame)
+        r2_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(r2_frame, text="🔑 OTP Code:").pack(side=tk.LEFT, padx=(2, 2))
+        self.curr_code_entry = ttk.Entry(r2_frame, width=12, font=('Consolas', 9, 'bold'), foreground='#4ec9b0')
+        self.curr_code_entry.pack(side=tk.LEFT, padx=(0, 8))
+        self.curr_code_entry.insert(0, "-")
+        self.curr_code_entry.config(state='readonly')
+        
+        ttk.Label(r2_frame, text="🎂 Birthday:").pack(side=tk.LEFT, padx=(2, 2))
+        self.curr_bday_entry = ttk.Entry(r2_frame, width=14, font=('Consolas', 9))
+        self.curr_bday_entry.pack(side=tk.LEFT, padx=(0, 8))
+        self.curr_bday_entry.insert(0, "-")
+        self.curr_bday_entry.config(state='readonly')
+        
+        ttk.Label(r2_frame, text="🔐 2FA Key:").pack(side=tk.LEFT, padx=(2, 2))
+        self.curr_twofa_entry = ttk.Entry(r2_frame, width=18, font=('Consolas', 9))
+        self.curr_twofa_entry.pack(side=tk.LEFT, padx=(0, 8))
+        self.curr_twofa_entry.insert(0, "-")
+        self.curr_twofa_entry.config(state='readonly')
+        
+        ttk.Label(r2_frame, text="🆔 Task ID:").pack(side=tk.LEFT, padx=(2, 2))
+        self.curr_taskid_entry = ttk.Entry(r2_frame, width=14, font=('Consolas', 9))
+        self.curr_taskid_entry.pack(side=tk.LEFT, padx=(0, 8))
+        self.curr_taskid_entry.insert(0, "-")
+        self.curr_taskid_entry.config(state='readonly')
+        
+        # Row 3: Action & Quick Copy Buttons
+        r3_frame = ttk.Frame(task_frame)
+        r3_frame.pack(fill=tk.X, pady=(0, 2))
+        
+        ttk.Button(r3_frame, text="📋 Copy All Account Info", command=self.copy_current_task_combo, width=22).pack(side=tk.LEFT, padx=(2, 4))
+        ttk.Button(r3_frame, text="👤:🔒 User:Pass", command=self.copy_user_pass, width=14).pack(side=tk.LEFT, padx=3)
+        ttk.Button(r3_frame, text="✉️:🔑 Email:Code", command=self.copy_email_code, width=16).pack(side=tk.LEFT, padx=3)
+        ttk.Button(r3_frame, text="🔑 Code Only", command=self.copy_code_only, width=13).pack(side=tk.LEFT, padx=3)
         
         # === Log ===
         log_frame = ttk.LabelFrame(dashboard_tab, text="📝 Log", padding="5")
@@ -266,42 +312,115 @@ class InstagramAutomationController:
         except Exception:
             pass
 
-    def update_current_task_ui(self, login, name, password, email):
-        """Update current task bar with all 4 credentials"""
+    def update_current_task_ui(self, login="-", name="-", password="-", email="-", code="-", birthday="-", task_id="-", twofa="-", step=""):
+        """Update current task section with all account info fields and live step progress"""
         def _update():
-            self.task_info.config(
-                text=f"👤 Login: {login}   |   📝 Name: {name}   |   🔒 Pass: {password}   |   ✉️ Email: {email}",
-                foreground='#4ec9b0'
-            )
+            # Update header summary text
+            if login and login != "-":
+                summary = f"👤 {login}  |  📝 {name}  |  🔒 {password}  |  ✉️ {email}"
+                if code and code != "-":
+                    summary += f"  |  🔑 OTP: {code}"
+                self.task_info.config(text=summary, foreground='#4ec9b0')
+            else:
+                self.task_info.config(text="No active task (Waiting for next task from EasyEarn...)", foreground='#9cdcfe')
+                
+            if step and hasattr(self, 'task_step_badge'):
+                self.task_step_badge.config(
+                    text=f"[{step}]", 
+                    foreground='#4ec9b0' if 'complete' in step.lower() or 'success' in step.lower() else '#e5c07b'
+                )
+                
             for entry, val in [
                 (self.curr_login_entry, login),
                 (self.curr_name_entry, name),
                 (self.curr_pass_entry, password),
-                (self.curr_email_entry, email)
+                (self.curr_email_entry, email),
+                (self.curr_code_entry, code),
+                (self.curr_bday_entry, birthday),
+                (self.curr_twofa_entry, twofa),
+                (self.curr_taskid_entry, task_id)
             ]:
-                entry.config(state='normal')
-                entry.delete(0, tk.END)
-                entry.insert(0, val)
-                entry.config(state='readonly')
+                try:
+                    entry.config(state='normal')
+                    entry.delete(0, tk.END)
+                    entry.insert(0, str(val) if val else "-")
+                    entry.config(state='readonly')
+                except Exception:
+                    pass
         try:
             self.root.after(0, _update)
         except Exception:
             pass
 
     def copy_current_task_combo(self):
-        """Copy current task login:password:email:name combo to clipboard"""
+        """Copy all current task account info to clipboard"""
         login = self.curr_login_entry.get().strip()
         name = self.curr_name_entry.get().strip()
         pwd = self.curr_pass_entry.get().strip()
         email = self.curr_email_entry.get().strip()
+        code = self.curr_code_entry.get().strip()
+        bday = self.curr_bday_entry.get().strip()
+        twofa = self.curr_twofa_entry.get().strip()
+        
         if not login or login == "-":
             messagebox.showinfo("No Active Task", "There is currently no active task credentials to copy.")
             return
-        combo = f"{login}:{pwd}:{email}:{name}"
+            
+        parts = [login, pwd, email, name]
+        if code and code != "-":
+            parts.append(code)
+        if bday and bday != "-":
+            parts.append(bday)
+        if twofa and twofa != "-":
+            parts.append(twofa)
+            
+        combo = ":".join(parts)
         self.root.clipboard_clear()
         self.root.clipboard_append(combo)
-        self.log(f"📋 Copied current task combo to clipboard: {combo}", 'info')
-        messagebox.showinfo("Copied to Clipboard", f"Task credentials copied successfully:\n\n{combo}\n\nFormat: username:password:email:name")
+        self.log(f"📋 Copied all task account info to clipboard: {combo}", 'info')
+        messagebox.showinfo(
+            "Copied to Clipboard",
+            f"All Account Information Copied:\n\n"
+            f"Username : {login}\n"
+            f"Password : {pwd}\n"
+            f"Email    : {email}\n"
+            f"Name     : {name}\n"
+            f"OTP Code : {code}\n"
+            f"Birthday : {bday}\n"
+            f"2FA Key  : {twofa}\n\n"
+            f"Raw Combo:\n{combo}"
+        )
+
+    def copy_user_pass(self):
+        login = self.curr_login_entry.get().strip()
+        pwd = self.curr_pass_entry.get().strip()
+        if not login or login == "-":
+            messagebox.showinfo("No Active Task", "No active task available.")
+            return
+        combo = f"{login}:{pwd}"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(combo)
+        self.log(f"📋 Copied User:Pass to clipboard: {combo}", 'info')
+
+    def copy_email_code(self):
+        email = self.curr_email_entry.get().strip()
+        code = self.curr_code_entry.get().strip()
+        if not email or email == "-":
+            messagebox.showinfo("No Active Task", "No active task available.")
+            return
+        combo = f"{email}:{code}"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(combo)
+        self.log(f"📋 Copied Email:Code to clipboard: {combo}", 'info')
+
+    def copy_code_only(self):
+        code = self.curr_code_entry.get().strip()
+        if not code or code == "-":
+            messagebox.showinfo("No Code", "No OTP confirmation code has been received yet.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(code)
+        self.log(f"📋 Copied OTP Code to clipboard: {code}", 'info')
 
     def setup_version_tab(self, parent):
         """Construct the Version & Updates inspection tab"""
@@ -762,15 +881,32 @@ class InstagramAutomationController:
                 login_val = str(task.get('login', '')).strip()
                 name_val = str(task.get('first_name', '')).strip() or login_val
                 email_val = str(task.get('email', '')).strip()
+                bday_val = str(task.get('birthday', '1999-05-14')).strip()
+                task_id_val = str(task.get('task_id', '') or getattr(self.easyearn, 'task_id', '') or f"Task #{self.accounts_created + 1}").strip()
                 
-                # Update UI Task Bar with all 4: Login, Name, Password, Email
-                self.update_current_task_ui(login_val, name_val, pwd_raw, email_val)
+                # Maintain full live task state dictionary
+                self.current_task_state = {
+                    'login': login_val,
+                    'name': name_val,
+                    'password': pwd_raw,
+                    'email': email_val,
+                    'code': '-',
+                    'birthday': bday_val,
+                    'task_id': task_id_val,
+                    'twofa': '-',
+                    'step': 'Step 1/11: Connecting'
+                }
+                
+                # Update UI Task Frame with ALL account info
+                self.update_current_task_ui(**self.current_task_state)
                 
                 self.log(f"📦 Successfully fetched task credentials from EasyEarn (Unmasked):", 'success')
                 self.log(f"   👤 Login / User : {login_val}", 'info')
                 self.log(f"   📝 Full Name    : {name_val}", 'info')
                 self.log(f"   🔒 Password     : {pwd_raw}", 'info')
                 self.log(f"   ✉️ Email        : {email_val}", 'info')
+                self.log(f"   🎂 Birthday     : {bday_val}", 'info')
+                self.log(f"   🆔 Task ID      : {task_id_val}", 'info')
                 
                 # Step 3: Ensure LDPlayer is ready before proceeding
                 self.log("📱 Connecting to LDPlayer emulator...", 'info')
@@ -787,34 +923,68 @@ class InstagramAutomationController:
                     'email': email_val,
                     'username': login_val,
                     'password': pwd_raw,
-                    'full_name': name_val
+                    'full_name': name_val,
+                    'birthday': bday_val
                 }
                 
+                # Live callback updating step on GUI
+                def task_log_cb(msg, level='info'):
+                    self.log(msg, level)
+                    msg_l = msg.lower()
+                    if 'step ' in msg_l:
+                        import re
+                        step_match = re.search(r'\[(Step [^\]]+)\]', msg, re.IGNORECASE)
+                        if step_match:
+                            self.current_task_state['step'] = step_match.group(1)
+                            self.update_current_task_ui(**self.current_task_state)
+
+                # Real-time OTP wrapper to immediately display code in GUI
+                def wrapped_otp_fetcher():
+                    self.current_task_state['step'] = 'Step 7/11: Polling Email OTP'
+                    self.update_current_task_ui(**self.current_task_state)
+                    code = self.easyearn.get_email_code()
+                    if code:
+                        self.current_task_state['code'] = str(code)
+                        self.current_task_state['step'] = f'OTP Code: {code}'
+                        self.update_current_task_ui(**self.current_task_state)
+                        self.log(f"🔑 Live OTP verification code captured: {code}", 'success')
+                    return code
+
                 # Step 4: Launch registration workflow on LDPlayer
-                # OTP code will be fetched in real-time when Instagram reaches the verification screen
                 result = self.ldplayer.create_instagram_account(
                     account_data=account_data,
-                    otp_fetcher=self.easyearn.get_email_code,
+                    otp_fetcher=wrapped_otp_fetcher,
                     twofa_enabled=True,
                     easyearn_client=self.easyearn,
-                    log_cb=self.log
+                    log_cb=task_log_cb
                 )
                 
                 if result['success']:
                     self.accounts_created += 1
                     self.update_stats('accounts_created', self.accounts_created)
+                    twofa_res = result.get('twofa_key', '')
+                    if twofa_res:
+                        self.current_task_state['twofa'] = str(twofa_res)
+                    self.current_task_state['step'] = '✅ Account Created & Submitting Report'
+                    self.update_current_task_ui(**self.current_task_state)
                     self.log(f"✅ Account created: {result['username']}", 'success')
                     
                     # Generate and submit final report on EasyEarn
                     self.log("📤 Submitting final completion report to EasyEarn...", 'info')
                     if self.easyearn.submit_report():
+                        self.current_task_state['step'] = '🎉 Task Completed'
+                        self.update_current_task_ui(**self.current_task_state)
                         self.log("✅ Task completed successfully!", 'success')
                         self.update_stats('earnings', f"${self.accounts_created * 0.025:.3f}")
                     else:
+                        self.current_task_state['step'] = '⚠️ Report Pending'
+                        self.update_current_task_ui(**self.current_task_state)
                         self.log("⚠️ Report submission failed", 'warning')
                 else:
                     self.failed_accounts += 1
                     self.update_stats('failed_accounts', self.failed_accounts)
+                    self.current_task_state['step'] = '❌ Registration Failed'
+                    self.update_current_task_ui(**self.current_task_state)
                     self.log(f"❌ Account creation failed: {result.get('error', 'Unknown error')}", 'error')
                 
                 # Clean up and wait

@@ -8,7 +8,7 @@ import {
   Play, Square, Save, Activity, CheckCircle, XCircle, 
   DollarSign, Clock, Terminal as TerminalIcon, Settings, 
   User, Lock, Server, Hash, Monitor, Smartphone, Trash2,
-  Copy, Check, Mail, Key, Tag
+  Copy, Check, Mail, Key, Tag, Calendar, ShieldCheck, Sparkles
 } from 'lucide-react';
 import type { LogEntry, AppConfig, AppStats } from './types';
 
@@ -17,6 +17,11 @@ interface TaskData {
   name: string;
   password: string;
   email: string;
+  code?: string;
+  birthday?: string;
+  taskId?: string;
+  twofaKey?: string;
+  step?: string;
 }
 
 const INITIAL_CONFIG: AppConfig = {
@@ -131,39 +136,70 @@ export default function App() {
         const fakeName = `Alex Johnson ${fakeNum % 99}`;
         const fakePass = `Insta_${Math.random().toString(36).substring(2, 7)}9`;
         const fakeEmail = `${fakeUser}@fastmail.org`;
+        const fakeBday = "1999-05-14";
+        const fakeTaskId = `#EE-${fakeNum}`;
 
         const task: TaskData = {
           login: fakeUser,
           name: fakeName,
           password: fakePass,
           email: fakeEmail,
+          code: '',
+          birthday: fakeBday,
+          taskId: fakeTaskId,
+          twofaKey: '',
+          step: 'Step 1/11: Connecting'
         };
-        setCurrentTask(task);
+        setCurrentTask({ ...task });
 
         addLog('📦 Fetched task credentials from EasyEarn (Unmasked):', 'success');
         addLog(`   👤 Login / User : ${fakeUser}`, 'info');
         addLog(`   📝 Full Name    : ${fakeName}`, 'info');
         addLog(`   🔒 Password     : ${fakePass}`, 'info');
         addLog(`   ✉️ Email        : ${fakeEmail}`, 'info');
+        addLog(`   🎂 Birthday     : ${fakeBday}`, 'info');
+        addLog(`   🆔 Task ID      : ${fakeTaskId}`, 'info');
 
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 1200));
         if (!runningRef.current) return;
-        addLog(`📧 Requesting OTP verification code for ${fakeEmail}...`, 'info');
-        
-        await new Promise(r => setTimeout(r, 2000));
-        if (!runningRef.current) return;
-        addLog(`📧 Code received: ${Math.floor(100000 + Math.random() * 900000)}`, 'success');
+        task.step = 'Step 4/11: Entering Password';
+        setCurrentTask({ ...task });
 
         await new Promise(r => setTimeout(r, 1000));
         if (!runningRef.current) return;
+        task.step = 'Step 5/11: Setting Adult Birthday';
+        setCurrentTask({ ...task });
+
+        await new Promise(r => setTimeout(r, 1000));
+        if (!runningRef.current) return;
+        addLog(`📧 Requesting OTP verification code for ${fakeEmail}...`, 'info');
+        task.step = 'Step 7/11: Polling Email OTP';
+        setCurrentTask({ ...task });
+        
+        await new Promise(r => setTimeout(r, 2000));
+        if (!runningRef.current) return;
+        const receivedCode = String(Math.floor(100000 + Math.random() * 900000));
+        task.code = receivedCode;
+        task.step = `OTP Code: ${receivedCode}`;
+        setCurrentTask({ ...task });
+        addLog(`📧 Code received: ${receivedCode}`, 'success');
+
+        await new Promise(r => setTimeout(r, 1000));
+        if (!runningRef.current) return;
+        task.step = 'Step 8/11: Finalizing Profile';
+        setCurrentTask({ ...task });
         addLog(`📱 Creating Instagram account on LDPlayer (Password: ${fakePass})...`, 'task');
 
         // Simulate LDPlayer processing
-        await new Promise(r => setTimeout(r, 3500));
+        await new Promise(r => setTimeout(r, 3000));
         if (!runningRef.current) return;
         
         // 85% success rate
         if (Math.random() > 0.15) {
+          const fake2FA = 'JBSWY3DPEHPK3PXP';
+          task.twofaKey = fake2FA;
+          task.step = 'Step 10/11: 2FA & EasyEarn Report';
+          setCurrentTask({ ...task });
           addLog(`✅ Account created: ${fakeUser} | Pass: ${fakePass}`, 'success');
           addLog('🔐 Generating and submitting 2FA security key...', 'info');
           await new Promise(r => setTimeout(r, 1000));
@@ -174,6 +210,8 @@ export default function App() {
           await new Promise(r => setTimeout(r, 1000));
           if (!runningRef.current) return;
 
+          task.step = '🎉 Completed Successfully';
+          setCurrentTask({ ...task });
           addLog('✅ Task completed successfully!', 'success');
           setStats(s => ({
             ...s,
@@ -181,6 +219,8 @@ export default function App() {
             earnings: s.earnings + 0.025
           }));
         } else {
+          task.step = '❌ Failed';
+          setCurrentTask({ ...task });
           addLog(`❌ Account creation failed: Device rate limit encountered`, 'error');
           setStats(s => ({
             ...s,
@@ -256,36 +296,72 @@ export default function App() {
           <StatCard icon={<Clock className="w-5 h-5 text-blue-400" />} label="Session Runtime" value={formatRuntime(stats.runtimeSeconds)} />
         </div>
 
-        {/* Current Task Bar - High Visibility with NO MASKING */}
+        {/* Current Task Bar - High Visibility with ALL Account Details */}
         <div className="bg-slate-900 border border-indigo-500/30 rounded-2xl p-5 shadow-lg shadow-indigo-950/20 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2.5">
               <span className="p-1.5 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-indigo-400">
                 <Key className="w-4 h-4" />
               </span>
               <div>
-                <h3 className="text-base font-semibold text-slate-100 flex items-center gap-2">
-                  Current Task Credentials
+                <h3 className="text-base font-semibold text-slate-100 flex flex-wrap items-center gap-2">
+                  Current Task Information
                   <span className="text-xs px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-md font-normal">
-                    Plain Text • Unmasked
+                    Plain Text • All Fields Unmasked
                   </span>
+                  {currentTask?.step && (
+                    <span className="text-xs px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-md font-mono">
+                      {currentTask.step}
+                    </span>
+                  )}
                 </h3>
-                <p className="text-xs text-slate-400">Real-time credentials extracted from EasyEarn for Instagram account registration</p>
+                <p className="text-xs text-slate-400">All real-time credentials, verification codes, and parameters for active Instagram task</p>
               </div>
             </div>
+            
             {currentTask && (
-              <button 
-                onClick={() => copyToClipboard(`${currentTask.login}:${currentTask.password}:${currentTask.email}:${currentTask.name}`, 'curr_combo')}
-                className="flex items-center gap-2 px-3.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 rounded-lg text-xs font-medium transition-colors"
-              >
-                {copiedKey === 'curr_combo' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedKey === 'curr_combo' ? 'Copied Combo!' : 'Copy Combo (User:Pass:Email:Name)'}</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button 
+                  onClick={() => {
+                    const combo = [
+                      currentTask.login,
+                      currentTask.password,
+                      currentTask.email,
+                      currentTask.name,
+                      currentTask.code || '',
+                      currentTask.birthday || '',
+                      currentTask.twofaKey || ''
+                    ].filter(Boolean).join(':');
+                    copyToClipboard(combo, 'curr_combo_all');
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/25 hover:bg-indigo-600/35 border border-indigo-500/40 text-indigo-200 rounded-lg text-xs font-medium transition-colors"
+                  title="Copy All Info (User:Pass:Email:Name:Code:Birthday:2FA)"
+                >
+                  {copiedKey === 'curr_combo_all' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedKey === 'curr_combo_all' ? 'Copied All Info!' : '📋 Copy All Account Info'}</span>
+                </button>
+                <button 
+                  onClick={() => copyToClipboard(`${currentTask.login}:${currentTask.password}`, 'curr_user_pass')}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-lg text-xs font-medium transition-colors"
+                >
+                  {copiedKey === 'curr_user_pass' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>User:Pass</span>
+                </button>
+                {currentTask.code && (
+                  <button 
+                    onClick={() => copyToClipboard(currentTask.code!, 'curr_code_only')}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/40 text-emerald-300 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    {copiedKey === 'curr_code_only' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>OTP: {currentTask.code}</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Login */}
+            {/* 1. Login */}
             <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
                 <span className="flex items-center gap-1.5 text-cyan-400 font-medium">
@@ -306,7 +382,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Name */}
+            {/* 2. Name */}
             <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
                 <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
@@ -327,7 +403,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Password - UNMASKED PLAIN TEXT */}
+            {/* 3. Password - UNMASKED PLAIN TEXT */}
             <div className="bg-slate-950/80 border border-amber-500/30 rounded-xl p-3 relative group">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
                 <span className="flex items-center gap-1.5 text-amber-400 font-medium">
@@ -348,7 +424,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Email */}
+            {/* 4. Email */}
             <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
               <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
                 <span className="flex items-center gap-1.5 text-indigo-400 font-medium">
@@ -366,6 +442,90 @@ export default function App() {
               </div>
               <div className="font-mono text-sm text-slate-100 font-semibold truncate select-all">
                 {currentTask?.email || <span className="text-slate-600 font-normal italic">Waiting for task...</span>}
+              </div>
+            </div>
+
+            {/* 5. OTP / Verification Code */}
+            <div className="bg-slate-950/80 border border-emerald-500/30 rounded-xl p-3 relative group">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                  <Key className="w-3.5 h-3.5" /> OTP Code (EasyEarn)
+                </span>
+                {currentTask?.code && (
+                  <button 
+                    onClick={() => copyToClipboard(currentTask.code!, 'c_code')}
+                    className="opacity-60 hover:opacity-100 text-slate-400 hover:text-white transition-opacity p-0.5"
+                    title="Copy OTP Code"
+                  >
+                    {copiedKey === 'c_code' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+              <div className="font-mono text-sm text-emerald-300 font-bold tracking-wider truncate select-all">
+                {currentTask?.code || <span className="text-slate-600 font-normal italic">Waiting for OTP...</span>}
+              </div>
+            </div>
+
+            {/* 6. Birthday */}
+            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span className="flex items-center gap-1.5 text-violet-400 font-medium">
+                  <Calendar className="w-3.5 h-3.5" /> Birthday (Age &gt; 18)
+                </span>
+                {currentTask?.birthday && (
+                  <button 
+                    onClick={() => copyToClipboard(currentTask.birthday!, 'c_bday')}
+                    className="opacity-60 hover:opacity-100 text-slate-400 hover:text-white transition-opacity p-0.5"
+                    title="Copy Birthday"
+                  >
+                    {copiedKey === 'c_bday' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+              <div className="font-mono text-sm text-slate-100 font-semibold truncate select-all">
+                {currentTask?.birthday || <span className="text-slate-600 font-normal italic">Waiting for task...</span>}
+              </div>
+            </div>
+
+            {/* 7. 2FA Key */}
+            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span className="flex items-center gap-1.5 text-rose-400 font-medium">
+                  <ShieldCheck className="w-3.5 h-3.5" /> 2FA Secret Key
+                </span>
+                {currentTask?.twofaKey && (
+                  <button 
+                    onClick={() => copyToClipboard(currentTask.twofaKey!, 'c_2fa')}
+                    className="opacity-60 hover:opacity-100 text-slate-400 hover:text-white transition-opacity p-0.5"
+                    title="Copy 2FA Key"
+                  >
+                    {copiedKey === 'c_2fa' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+              <div className="font-mono text-sm text-slate-100 font-semibold truncate select-all">
+                {currentTask?.twofaKey || <span className="text-slate-600 font-normal italic">Generated after signup</span>}
+              </div>
+            </div>
+
+            {/* 8. Task ID */}
+            <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 relative group">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span className="flex items-center gap-1.5 text-sky-400 font-medium">
+                  <Hash className="w-3.5 h-3.5" /> EasyEarn Task ID
+                </span>
+                {currentTask?.taskId && (
+                  <button 
+                    onClick={() => copyToClipboard(currentTask.taskId!, 'c_taskid')}
+                    className="opacity-60 hover:opacity-100 text-slate-400 hover:text-white transition-opacity p-0.5"
+                    title="Copy Task ID"
+                  >
+                    {copiedKey === 'c_taskid' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+              <div className="font-mono text-sm text-sky-300 font-semibold truncate select-all">
+                {currentTask?.taskId || <span className="text-slate-600 font-normal italic">Pending...</span>}
               </div>
             </div>
           </div>

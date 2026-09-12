@@ -343,6 +343,11 @@ class EasyEarnClient:
             if isinstance(data[k], str):
                 data[k] = data[k].strip().strip('"').strip("'")
 
+        if self.task_id:
+            data['task_id'] = self.task_id
+        if not data.get('birthday'):
+            data['birthday'] = "1999-05-14"
+
         # Guarantee a valid password if EasyEarn didn't provide an explicit one
         if not data.get('password'):
             seed = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
